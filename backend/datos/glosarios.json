@@ -1,0 +1,72 @@
+[
+  {"nombre": "Medicina clínica", "origen": "en", "destino": "es", "terminos": [
+    ["randomized controlled trial", "ensayo clínico aleatorizado"], ["placebo", "placebo"], ["outcome", "desenlace"],
+    ["adverse event", "evento adverso"], ["cohort study", "estudio de cohortes"], ["case-control study", "estudio de casos y controles"],
+    ["hazard ratio", "cociente de riesgos instantáneos"], ["odds ratio", "razón de momios"], ["relative risk", "riesgo relativo"],
+    ["incidence", "incidencia"], ["prevalence", "prevalencia"], ["mortality", "mortalidad"], ["morbidity", "morbilidad"],
+    ["follow-up", "seguimiento"], ["baseline", "basal"], ["endpoint", "variable de desenlace"], ["informed consent", "consentimiento informado"],
+    ["inpatient", "paciente hospitalizado"], ["outpatient", "paciente ambulatorio"], ["comorbidity", "comorbilidad"],
+    ["dose", "dosis"], ["drug", "fármaco"], ["screening", "tamizaje"], ["sensitivity", "sensibilidad"], ["specificity", "especificidad"],
+    ["meta-analysis", "metaanálisis"], ["systematic review", "revisión sistemática"], ["intensive care unit", "unidad de cuidados intensivos"],
+    ["chronic kidney disease", "enfermedad renal crónica"], ["hypertension", "hipertensión arterial"]
+  ]},
+  {"nombre": "Virología y microbiología", "origen": "en", "destino": "es", "terminos": [
+    ["virus", "virus"], ["viral load", "carga viral"], ["host cell", "célula hospedera"], ["replication", "replicación"],
+    ["envelope", "envoltura"], ["capsid", "cápside"], ["spike protein", "proteína espiga"], ["fusion protein", "proteína de fusión"],
+    ["hemagglutinin", "hemaglutinina"], ["neutralizing antibody", "anticuerpo neutralizante"], ["plaque assay", "ensayo de placas"],
+    ["cytopathic effect", "efecto citopático"], ["multiplicity of infection", "multiplicidad de infección"], ["titer", "título"],
+    ["strain", "cepa"], ["genotype", "genotipo"], ["lineage", "linaje"], ["outbreak", "brote"], ["vaccine", "vacuna"],
+    ["vaccination coverage", "cobertura de vacunación"], ["herd immunity", "inmunidad colectiva"], ["antiviral", "antiviral"],
+    ["inhibitor", "inhibidor"], ["polymerase", "polimerasa"], ["protease", "proteasa"], ["sequencing", "secuenciación"],
+    ["phylogenetic tree", "árbol filogenético"], ["reverse transcription", "transcripción inversa"], ["cell line", "línea celular"],
+    ["bacteria", "bacterias"], ["antibiotic resistance", "resistencia a antibióticos"], ["pathogen", "patógeno"]
+  ]},
+  {"nombre": "Estadística", "origen": "en", "destino": "es", "terminos": [
+    ["confidence interval", "intervalo de confianza"], ["standard deviation", "desviación estándar"], ["standard error", "error estándar"],
+    ["mean", "media"], ["median", "mediana"], ["interquartile range", "rango intercuartílico"], ["null hypothesis", "hipótesis nula"],
+    ["p-value", "valor p"], ["statistical significance", "significancia estadística"], ["regression", "regresión"],
+    ["logistic regression", "regresión logística"], ["linear model", "modelo lineal"], ["mixed model", "modelo mixto"],
+    ["covariate", "covariable"], ["confounder", "factor de confusión"], ["sample size", "tamaño de muestra"], ["power", "potencia"],
+    ["likelihood", "verosimilitud"], ["prior", "distribución a priori"], ["posterior", "distribución a posteriori"],
+    ["bootstrap", "remuestreo bootstrap"], ["outlier", "valor atípico"], ["variance", "varianza"], ["correlation", "correlación"],
+    ["chi-square test", "prueba de ji cuadrada"], ["survival analysis", "análisis de supervivencia"]
+  ]},
+  {"nombre": "Aprendizaje automático e IA", "origen": "en", "destino": "es", "terminos": [
+    ["machine learning", "aprendizaje automático"], ["deep learning", "aprendizaje profundo"], ["neural network", "red neuronal"],
+    ["training set", "conjunto de entrenamiento"], ["test set", "conjunto de prueba"], ["validation set", "conjunto de validación"],
+    ["overfitting", "sobreajuste"], ["underfitting", "subajuste"], ["loss function", "función de pérdida"], ["gradient descent", "descenso de gradiente"],
+    ["learning rate", "tasa de aprendizaje"], ["batch size", "tamaño de lote"], ["fine-tuning", "ajuste fino"], ["embedding", "representación vectorial (embedding)"],
+    ["transformer", "transformer"], ["attention", "atención"], ["large language model", "modelo de lenguaje grande"],
+    ["feature", "característica"], ["label", "etiqueta"], ["benchmark", "banco de pruebas"], ["inference", "inferencia"],
+    ["reinforcement learning", "aprendizaje por refuerzo"], ["convolutional", "convolucional"], ["dropout", "dropout"],
+    ["accuracy", "exactitud"], ["precision", "precisión"], ["recall", "exhaustividad"]
+  ]},
+  {"nombre": "Redacción académica", "origen": "en", "destino": "es", "terminos": [
+    ["abstract", "resumen"], ["background", "antecedentes"], ["methods", "métodos"], ["results", "resultados"], ["discussion", "discusión"],
+    ["conclusions", "conclusiones"], ["acknowledgments", "agradecimientos"], ["references", "referencias"], ["supplementary material", "material suplementario"],
+    ["peer review", "revisión por pares"], ["preprint", "preimpresión (preprint)"], ["corresponding author", "autor de correspondencia"],
+    ["funding", "financiamiento"], ["conflict of interest", "conflicto de intereses"], ["data availability", "disponibilidad de datos"],
+    ["et al.", "et al."], ["hereafter", "en adelante"], ["state of the art", "estado del arte"], ["framework", "marco"],
+    ["approach", "enfoque"], ["findings", "hallazgos"], ["limitations", "limitaciones"], ["further research", "investigación futura"]
+  ]},
+  {"nombre": "Química y bioquímica", "origen": "en", "destino": "es", "terminos": [
+    ["binding affinity", "afinidad de unión"], ["docking", "acoplamiento molecular"], ["ligand", "ligando"], ["receptor", "receptor"],
+    ["active site", "sitio activo"], ["enzyme", "enzima"], ["substrate", "sustrato"], ["yield", "rendimiento"], ["solvent", "disolvente"],
+    ["reagent", "reactivo"], ["buffer", "amortiguador"], ["precipitate", "precipitado"], ["titration", "titulación"], ["molar mass", "masa molar"],
+    ["half-life", "vida media"], ["IC50", "CI50"], ["EC50", "CE50"], ["molecular dynamics", "dinámica molecular"], ["crystal structure", "estructura cristalina"],
+    ["hydrogen bond", "puente de hidrógeno"], ["side chain", "cadena lateral"], ["assay", "ensayo"]
+  ]},
+  {"nombre": "Física", "origen": "en", "destino": "es", "terminos": [
+    ["quantum mechanics", "mecánica cuántica"], ["wave function", "función de onda"], ["field", "campo"], ["momentum", "cantidad de movimiento"],
+    ["angular momentum", "momento angular"], ["energy level", "nivel de energía"], ["ground state", "estado fundamental"], ["excited state", "estado excitado"],
+    ["spin", "espín"], ["lattice", "red cristalina"], ["band gap", "banda prohibida"], ["superconductivity", "superconductividad"],
+    ["dark matter", "materia oscura"], ["redshift", "corrimiento al rojo"], ["boundary condition", "condición de frontera"],
+    ["thermal equilibrium", "equilibrio térmico"], ["entropy", "entropía"], ["scattering", "dispersión"]
+  ]},
+  {"nombre": "Ingeniería y electrónica", "origen": "en", "destino": "es", "terminos": [
+    ["circuit", "circuito"], ["voltage", "voltaje"], ["current", "corriente"], ["resistor", "resistor"], ["capacitor", "capacitor"],
+    ["microcontroller", "microcontrolador"], ["firmware", "firmware"], ["sensor", "sensor"], ["actuator", "actuador"], ["load", "carga"],
+    ["torque", "par de torsión"], ["stress", "esfuerzo"], ["strain", "deformación"], ["throughput", "rendimiento"], ["bandwidth", "ancho de banda"],
+    ["latency", "latencia"], ["feedback loop", "lazo de retroalimentación"], ["control system", "sistema de control"], ["power supply", "fuente de alimentación"]
+  ]}
+]

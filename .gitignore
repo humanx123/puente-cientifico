@@ -1,9 +1,10 @@
 .venv/
 .claude/
 node_modules/
-dist/
-build/stage/
-build/cache/
 __pycache__/
 *.pyc
-
+backend/static/
+build/stage/
+build/cache/
+build/dist/
+frontend/dist/
