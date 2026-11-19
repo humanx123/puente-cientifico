@@ -120,6 +120,7 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
 
           {sec === 'literatura' && (
             <div className="col">
+              <PanelOpenAlex l={l} set={set} guardar={async () => setAjustes(await api.put('/api/ajustes', { literatura: l }))} />
               <PanelTunel l={l} set={set} />
               <div className="caja">
                 <div className="caja-cab"><span className="num">LB</span>LibGen y Anna's Archive</div>
@@ -163,9 +164,8 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
                 <Campo etiqueta="Tiempo de espera (ms)"><input className="entrada mono" type="number" value={l.tiempo_espera_ms} onChange={(e) => set('literatura', 'tiempo_espera_ms', Number(e.target.value))} /></Campo>
                 <Campo etiqueta="Reintentos de red"><input className="entrada mono" type="number" min="0" max="10" value={l.reintentos} onChange={(e) => set('literatura', 'reintentos', Number(e.target.value))} /></Campo>
                 <Campo etiqueta="Agente de usuario (User-Agent)" ancho><input className="entrada mono" value={l.agente_usuario} onChange={(e) => set('literatura', 'agente_usuario', e.target.value)} /></Campo>
+                <div className="ancho"><Casilla checked={l.verificacion_auto !== false} onChange={(v) => set('literatura', 'verificacion_auto', v)}>Si una revista o espejo bloquea programas (403 / «Just a moment»), abrir la ventana de verificación integrada y capturar el PDF automáticamente</Casilla></div>
                 <div className="ancho"><Casilla checked={l.sobrescribir} onChange={(v) => set('literatura', 'sobrescribir', v)}>Sobrescribir archivos con el mismo nombre en la carpeta de copia</Casilla></div>
-                <Campo etiqueta="Correo para OpenAlex (opcional)" ayuda="Entra en el «polite pool», con límites más amplios."><input className="entrada" value={l.openalex_correo} onChange={(e) => set('literatura', 'openalex_correo', e.target.value)} /></Campo>
-                <Campo etiqueta="Clave de API de OpenAlex (opcional)"><input className="entrada mono" type="password" placeholder={l.openalex_clave_configurada ? '•••• guardada' : ''} value={l.openalex_clave} onChange={(e) => set('literatura', 'openalex_clave', e.target.value)} /></Campo>
               </div>
               <div className="aviso-legal">Usa Sci-Hub conforme a la legislación de tu país. Si un espejo responde con DDoS-Guard, cambia de espejo, de red o usa un proxy.</div>
             </div>
@@ -293,6 +293,62 @@ function PanelFreeLLMAPI({ t, set, setAjustes, cargarModelos, cargandoM }) {
           </div>
         </Campo>
         <div className="ancho"><Casilla checked={t.freellmapi_autoarranque} onChange={(v) => set('traduccion', 'freellmapi_autoarranque', v)}>Iniciar FreeLLMAPI automáticamente cuando haga falta traducir o preguntar</Casilla></div>
+      </div>
+    </div>
+  )
+}
+
+function PanelOpenAlex({ l, set, guardar }) {
+  const avisar = useAviso()
+  const [prueba, setPrueba] = useState(null)
+  const [probando, setProbando] = useState(false)
+  const probar = async () => {
+    setProbando(true)
+    try {
+      await guardar()
+      const r = await api.post('/api/literatura/probar-openalex')
+      setPrueba(r)
+      avisar(r.ok ? `OpenAlex responde: ${r.restantes} de ${r.limite} créditos disponibles hoy.` : `OpenAlex respondió HTTP ${r.codigo}.`, r.ok ? 'ok' : 'error', 8000)
+    } catch (e) { avisar(e.message, 'error', 9000) } finally { setProbando(false) }
+  }
+  const horas = prueba?.reinicio_s ? Math.round(prueba.reinicio_s / 360) / 10 : null
+  return (
+    <div className="caja">
+      <div className="caja-cab"><span className="num">OA</span>Búsqueda de artículos · OpenAlex</div>
+      <div className="caja-cuerpo col">
+        <div className="tenue" style={{ fontSize: 12.5 }}>
+          OpenAlex funciona con créditos diarios. Sin clave hay 1000 al día: una búsqueda por texto gasta 10, ver las obras de un autor gasta 1 y consultar un DOI es gratis.
+          La app espacia las peticiones, guarda en caché las búsquedas 30 minutos y, si se agota el cupo, cambia sola a <b>Crossref</b> (gratuito y sin cupo diario).
+        </div>
+        <div className="form-rejilla">
+          <Campo etiqueta="Fuente de metadatos">
+            <select className="entrada" value={l.metadatos || 'auto'} onChange={(e) => set('literatura', 'metadatos', e.target.value)}>
+              <option value="auto">Automática: OpenAlex y, si se agota, Crossref</option>
+              <option value="openalex">Solo OpenAlex</option>
+              <option value="crossref">Solo Crossref (sin cupo, sin acceso abierto detallado)</option>
+            </select>
+          </Campo>
+          <Campo etiqueta="Correo de contacto (recomendado)" ayuda="OpenAlex y Crossref dan mejor servicio a quien se identifica. Solo se envía a ellos.">
+            <input className="entrada" type="email" placeholder="tu@correo.com" value={l.openalex_correo} onChange={(e) => set('literatura', 'openalex_correo', e.target.value)} />
+          </Campo>
+          <Campo etiqueta="Clave de API de OpenAlex (gratuita)" ancho
+            ayuda="1) Pulsa «Obtener clave», entra con Google o tu correo. 2) Copia la clave de la página de API. 3) Pégala aquí y pulsa «Guardar y probar».">
+            <div style={{ display: 'flex', gap: 8 }}>
+              <input className="entrada mono" type="password" placeholder={l.openalex_clave_configurada ? '•••••••• guardada' : 'pega aquí tu clave'} value={l.openalex_clave} onChange={(e) => set('literatura', 'openalex_clave', e.target.value)} />
+              <button className="btn" onClick={() => abrirUrl('https://openalex.org/settings/api')}>Obtener clave</button>
+              <button className="btn primario" onClick={probar} disabled={probando}>{probando ? <Loader2 size={14} className="girar" /> : <FlaskConical size={14} />}Guardar y probar</button>
+            </div>
+          </Campo>
+        </div>
+        {prueba && (
+          <div className="chips">
+            <span className={`chip ${prueba.ok ? 'verde' : 'rojo'}`}>{prueba.ok ? 'Conexión correcta' : `Error ${prueba.codigo}`}</span>
+            <span className="chip">{prueba.con_clave ? 'Con clave' : 'Sin clave'}</span>
+            {prueba.limite && <span className="chip">Límite diario: {prueba.limite} créditos</span>}
+            {prueba.restantes && <span className={`chip ${Number(prueba.restantes) < 150 ? 'acido' : ''}`}>Quedan hoy: {prueba.restantes}</span>}
+            {horas != null && <span className="chip">Se renueva en {horas} h</span>}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -188,6 +188,13 @@ def _obra(raw: dict) -> dict | None:
 
 _CACHE_OA: dict[str, tuple[float, dict]] = {}
 _CREDITOS: dict[str, str] = {}
+_oa_lock = threading.Lock()
+_oa_ultima = [0.0]
+OA_INTERVALO = 1.1  # OpenAlex limita ráfagas (~1 petición/s sin clave): las peticiones van en fila
+
+
+class CuotaAgotada(LitError):
+    pass
 
 
 def _openalex_params(params: dict) -> dict:
@@ -199,14 +206,50 @@ def _openalex_params(params: dict) -> dict:
     return params
 
 
+def _oa_get(url: str, params: dict | None = None, timeout: int = 30) -> requests.Response:
+    """GET a OpenAlex con clave, ritmo de 1 petición/s y reintento ante ráfagas (429 con créditos)."""
+    cfg = load_settings()["literatura"]
+    cabeceras = {"Authorization": f"Bearer {cfg['openalex_clave']}"} if cfg.get("openalex_clave") else {}
+    for intento in range(3):
+        with _oa_lock:
+            espera = OA_INTERVALO - (time.time() - _oa_ultima[0])
+            if espera > 0:
+                time.sleep(espera)
+            try:
+                r = sesion().get(url, params=_openalex_params(dict(params or {})), headers=cabeceras, timeout=timeout)
+            except requests.RequestException as e:
+                raise LitError("No se pudo conectar con OpenAlex: " + str(e)[:160]) from None
+            finally:
+                _oa_ultima[0] = time.time()
+        for k, h in (("restantes", "X-RateLimit-Remaining"), ("limite", "X-RateLimit-Limit"),
+                     ("reinicio_s", "X-RateLimit-Reset"), ("costo", "X-RateLimit-Credits-Used")):
+            if r.headers.get(h) is not None:
+                _CREDITOS[k] = r.headers[h]
+        _CREDITOS["con_clave"] = "1" if cabeceras else "0"
+        if r.status_code in (401, 403) and cabeceras:
+            raise LitError("OpenAlex rechazó tu clave de API. Revísala en Ajustes → Literatura → OpenAlex.")
+        if r.status_code != 429:
+            return r
+        restantes = r.headers.get("X-RateLimit-Remaining")
+        if restantes is not None and int(restantes or 0) <= 0:
+            break  # cupo diario agotado: no tiene sentido reintentar
+        time.sleep(1.5 * (intento + 1))  # ráfaga: esperar y reintentar
+    sin_clave = not cfg.get("openalex_clave")
+    horas = round(int(_CREDITOS.get("reinicio_s") or 0) / 3600, 1)
+    raise CuotaAgotada("OpenAlex: se agotó el cupo de hoy" + (f" (se renueva en ~{horas} h)" if horas else "") +
+                       (". Con una clave gratuita el límite es mucho mayor: Ajustes → Literatura → OpenAlex." if sin_clave else "."))
+
+
 def _filtro_texto(v: str) -> str:
     # En los filtros de OpenAlex la coma separa filtros y la barra separa alternativas
     return " ".join(v.replace(",", " ").replace("|", " ").replace(":", " ").split())[:300]
 
 
 def buscar(q: str = "", pagina: int = 1, solo_abierto: bool = False, desde: int | None = None, hasta: int | None = None,
-           orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = "") -> dict:
-    """modo: todo | titulo | autor | doi. `titulo` y `autor` se combinan (Y). `autor_id` = obras de un autor exacto."""
+           orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = "",
+           autor_nombre: str = "") -> dict:
+    """modo: todo | titulo | autor | doi. `titulo` y `autor` se combinan (Y). `autor_id` = obras de un autor exacto.
+    Fuente de metadatos (Ajustes): auto = OpenAlex y, si se agota el cupo, Crossref; o solo una de ellas."""
     q, titulo, autor = (q or "").strip(), (titulo or "").strip(), (autor or "").strip()
     autor_id = (autor_id or "").strip().rsplit("/", 1)[-1]
     if modo == "titulo" and q and not titulo:
@@ -217,6 +260,20 @@ def buscar(q: str = "", pagina: int = 1, solo_abierto: bool = False, desde: int 
         raise LitError("Escribe un título, un autor, palabras clave o un DOI.")
     if len(q) > 1024:
         raise LitError("La consulta es demasiado larga (máximo 1024 caracteres).")
+    fuente = load_settings()["literatura"].get("metadatos", "auto")
+    if fuente == "crossref":
+        return buscar_crossref(q, titulo, autor or autor_nombre, pagina, desde, hasta, orden, solo_abierto)
+    try:
+        return _buscar_openalex(q, titulo, autor, autor_id, pagina, solo_abierto, desde, hasta, orden)
+    except LitError as e:
+        if fuente != "auto" or not isinstance(e, CuotaAgotada) and "conectar" not in str(e):
+            raise
+        res = buscar_crossref(q, titulo, autor or autor_nombre, pagina, desde, hasta, orden, solo_abierto)
+        res["aviso"] = str(e) + " Mientras tanto se muestran resultados de Crossref."
+        return res
+
+
+def _buscar_openalex(q, titulo, autor, autor_id, pagina, solo_abierto, desde, hasta, orden) -> dict:
     params = {
         "per_page": 25, "page": max(1, min(int(pagina), 400)),
         "select": "id,doi,display_name,publication_year,authorships,primary_location,best_oa_location,locations,"
@@ -250,25 +307,15 @@ def buscar(q: str = "", pagina: int = 1, solo_abierto: bool = False, desde: int 
         params["sort"] = "publication_date:desc"  # obras de un autor: lo más reciente primero
     clave_cache = repr(sorted(params.items()))
     hit = _CACHE_OA.get(clave_cache)
-    if hit and time.time() - hit[0] < 600:
+    if hit and time.time() - hit[0] < 1800:
         data = hit[1]
     else:
-        try:
-            r = sesion().get(OPENALEX, params=_openalex_params(params), timeout=30)
-        except requests.RequestException as e:
-            raise LitError("No se pudo conectar con OpenAlex: " + str(e)[:160]) from None
-        _CREDITOS.update({k: r.headers.get(h) for k, h in (("restantes", "X-RateLimit-Remaining"), ("limite", "X-RateLimit-Limit"),
-                                                            ("reinicio_s", "X-RateLimit-Reset")) if r.headers.get(h)})
-        if r.status_code == 429:
-            sin_clave = not load_settings()["literatura"].get("openalex_clave")
-            raise LitError("OpenAlex limitó las peticiones" + (
-                " (sin clave hay ~100 búsquedas al día). Crea una clave gratuita en openalex.org/settings/api y pégala en "
-                "Ajustes → Literatura." if sin_clave else ". Espera un momento y vuelve a intentarlo."))
+        r = _oa_get(OPENALEX, params)
         if r.status_code != 200:
             raise LitError(f"OpenAlex respondió HTTP {r.status_code}.")
         data = r.json()
         _CACHE_OA[clave_cache] = (time.time(), data)
-        if len(_CACHE_OA) > 200:
+        if len(_CACHE_OA) > 300:
             _CACHE_OA.pop(next(iter(_CACHE_OA)))
     obras, vistos = [], set()
     for raw in data.get("results", []):
@@ -278,7 +325,111 @@ def buscar(q: str = "", pagina: int = 1, solo_abierto: bool = False, desde: int 
             obras.append(o)
     total = (data.get("meta") or {}).get("count") or 0
     return {"obras": obras, "total": total, "pagina": params["page"], "hay_mas": params["page"] * 25 < total,
+            "creditos": dict(_CREDITOS), "fuente": "openalex"}
+
+
+# ---------------------------------------------------------------------------
+# Crossref: respaldo gratuito y sin cupo diario (https://api.crossref.org)
+# ---------------------------------------------------------------------------
+CROSSREF = "https://api.crossref.org/works"
+
+
+def _obra_crossref(it: dict) -> dict | None:
+    titulo = _limpiar(" ".join(it.get("title") or []), 800)
+    doi = normalizar_doi(it.get("DOI"))
+    if not titulo or not doi:
+        return None
+    autores = []
+    for a in (it.get("author") or [])[:12]:
+        nombre = _limpiar(" ".join(x for x in (a.get("given"), a.get("family")) if x) or a.get("name"), 120)
+        if nombre and nombre not in autores:
+            autores.append(nombre)
+    partes = ((it.get("issued") or {}).get("date-parts") or [[None]])[0]
+    licencias = " ".join((l.get("URL") or "") for l in it.get("license") or [])
+    abierto = "creativecommons.org" in licencias
+    pdf = next((l.get("URL") for l in it.get("link") or [] if l.get("content-type") == "application/pdf"), None) if abierto else None
+    return {
+        "id": "crossref:" + doi, "titulo": titulo, "autores": autores,
+        "autores_det": [{"nombre": n, "id": ""} for n in autores], "anio": partes[0] if partes else None,
+        "revista": _limpiar(" ".join(it.get("container-title") or [])[:240], 240), "doi": doi,
+        "pagina_url": f"https://doi.org/{doi}", "pdf_url": _optional_url(pdf) if pdf else None,
+        "acceso_abierto": abierto, "estado_oa": "licencia CC" if abierto else None,
+        "citas": it.get("is-referenced-by-count"), "tipo": it.get("type"),
+        "en_biblioteca": bool(db.row("SELECT 1 FROM documentos WHERE doi=? AND papelera IS NULL", (doi,))),
+    }
+
+
+def _optional_url(v):
+    try:
+        return url_publica(v) if v and str(v).startswith("https://") else None
+    except LitError:
+        return None
+
+
+def buscar_crossref(q: str, titulo: str, autor: str, pagina: int = 1, desde=None, hasta=None,
+                    orden: str = "relevancia", solo_abierto: bool = False) -> dict:
+    cfg = load_settings()["literatura"]
+    pagina = max(1, min(int(pagina), 200))
+    doi = normalizar_doi(q) if q else None
+    if doi:
+        try:
+            r = sesion().get(f"{CROSSREF}/{urllib.parse.quote(doi, safe='/')}", timeout=25)
+            items = [r.json()["message"]] if r.status_code == 200 else []
+        except (requests.RequestException, ValueError, KeyError):
+            items = []
+        obras = [o for o in (_obra_crossref(i) for i in items) if o]
+        return {"obras": obras, "total": len(obras), "pagina": 1, "hay_mas": False, "fuente": "crossref", "creditos": {}}
+    params = {"rows": 25, "offset": (pagina - 1) * 25,
+              "select": "DOI,title,author,issued,container-title,is-referenced-by-count,type,link,license"}
+    if q:
+        params["query"] = q
+    if titulo:
+        params["query.bibliographic"] = titulo
+    if autor:
+        params["query.author"] = autor
+    filtros = []
+    if desde:
+        filtros.append(f"from-pub-date:{int(desde)}")
+    if hasta:
+        filtros.append(f"until-pub-date:{int(hasta)}")
+    if solo_abierto:
+        filtros.append("has-license:true")
+    if filtros:
+        params["filter"] = ",".join(filtros)
+    if orden == "citas":
+        params.update(sort="is-referenced-by-count", order="desc")
+    elif orden == "recientes":
+        params.update(sort="published", order="desc")
+    if cfg.get("openalex_correo"):
+        params["mailto"] = cfg["openalex_correo"]  # «polite pool» de Crossref
+    try:
+        r = sesion().get(CROSSREF, params=params, timeout=30)
+    except requests.RequestException as e:
+        raise LitError("No se pudo conectar con Crossref: " + str(e)[:160]) from None
+    if r.status_code != 200:
+        raise LitError(f"Crossref respondió HTTP {r.status_code}.")
+    msg = r.json().get("message", {})
+    obras, vistos = [], set()
+    for it in msg.get("items", []):
+        o = _obra_crossref(it)
+        if o and o["doi"] not in vistos:
+            vistos.add(o["doi"])
+            obras.append(o)
+    total = msg.get("total-results") or 0
+    return {"obras": obras, "total": total, "pagina": pagina, "hay_mas": pagina * 25 < total, "fuente": "crossref",
             "creditos": dict(_CREDITOS)}
+
+
+def probar_openalex() -> dict:
+    """Consulta gratuita (por DOI, 0 créditos) para ver el límite real de tu clave."""
+    r = _oa_get(f"{OPENALEX}/https://doi.org/10.1371/journal.pcbi.1003285", timeout=20)
+    return {"ok": r.status_code == 200, "codigo": r.status_code, "con_clave": bool(load_settings()["literatura"].get("openalex_clave")),
+            "limite": r.headers.get("X-RateLimit-Limit"), "restantes": r.headers.get("X-RateLimit-Remaining"),
+            "reinicio_s": r.headers.get("X-RateLimit-Reset")}
+
+
+def creditos() -> dict:
+    return dict(_CREDITOS)
 
 
 def autor(aid: str) -> dict:
@@ -286,10 +437,7 @@ def autor(aid: str) -> dict:
     aid = (aid or "").strip().rsplit("/", 1)[-1]
     if not re.fullmatch(r"A\d{4,12}", aid):
         raise LitError("Identificador de autor no válido.")
-    try:
-        r = sesion().get(f"https://api.openalex.org/authors/{aid}", params=_openalex_params({}), timeout=20)
-    except requests.RequestException as e:
-        raise LitError("No se pudo consultar el autor: " + str(e)[:120]) from None
+    r = _oa_get(f"https://api.openalex.org/authors/{aid}", timeout=20)
     if r.status_code != 200:
         raise LitError(f"OpenAlex respondió HTTP {r.status_code} al pedir el autor.")
     a = r.json()
@@ -308,9 +456,9 @@ def buscar_autores(nombre: str) -> list[dict]:
     if len(nombre) < 3:
         return []
     try:
-        r = sesion().get("https://api.openalex.org/authors", params=_openalex_params({"search": nombre, "per_page": 8}), timeout=20)
+        r = _oa_get("https://api.openalex.org/authors", {"search": nombre, "per_page": 8}, timeout=20)
         r.raise_for_status()
-    except requests.RequestException:
+    except (requests.RequestException, LitError):
         return []
     out = []
     for a in r.json().get("results", []):
@@ -322,10 +470,10 @@ def buscar_autores(nombre: str) -> list[dict]:
 
 def metadatos_doi(doi: str) -> dict | None:
     try:
-        r = sesion().get(f"{OPENALEX}/https://doi.org/{urllib.parse.quote(doi, safe='/')}", timeout=20)
+        r = _oa_get(f"{OPENALEX}/https://doi.org/{urllib.parse.quote(doi, safe='/')}", timeout=20)
         if r.status_code == 200:
             return _obra(r.json())
-    except requests.RequestException:
+    except (requests.RequestException, LitError):
         pass
     return None
 
@@ -356,11 +504,17 @@ def _xpath_urls(html_bytes: bytes, xpaths: list[str], base_url: str) -> list[str
     texto = html_bytes.decode("utf-8", "ignore")
     for m in re.finditer(r"location\.href\s*=\s*['\"]([^'\"]+\.pdf[^'\"]*)['\"]", texto):
         out.append(m.group(1))
+    # Enlaces .pdf sueltos: solo si son del artículo (contienen parte del DOI), nunca documentos del propio sitio
+    sufijo = urllib.parse.unquote(urllib.parse.urlsplit(base_url).path).lower().rsplit("/", 1)[-1]
     for m in re.finditer(r"href\s*=\s*['\"]([^'\"]+\.pdf(?:[?#][^'\"]*)?)['\"]", texto):
-        out.append(m.group(1))
+        h = m.group(1)
+        if sufijo and len(sufijo) > 4 and sufijo in urllib.parse.unquote(h).lower():
+            out.append(h)
     limpias = []
     for u in out:
         u = u.strip()
+        if re.search(r"/(docs|static|assets|images|img)/", u, re.I):
+            continue  # p. ej. sci-hub.*/docs/SCI.pdf (documento informativo del sitio)
         if u.startswith("//"):
             u = urllib.parse.urlsplit(base_url).scheme + ":" + u
         u = urllib.parse.urljoin(base_url, u)
@@ -472,6 +626,45 @@ def _procesar_cola(ids: list[str]) -> None:
         db.conn().execute("INSERT INTO descargas(consulta, estado, mensaje, documento_id) VALUES (?,?,?,?)",
                           (t["consulta"], t["estado"], t["registro"][-1]["msg"] if t["registro"] else "", t["documento_id"]))
         db.conn().commit()
+
+
+def encolar_obras(obras: list[dict], fuente: str | None = None) -> list[dict]:
+    """Descarga por lote de obras seleccionadas, conservando los metadatos de cada una."""
+    if not isinstance(obras, list) or not obras:
+        raise LitError("No hay obras seleccionadas.")
+    if len(obras) > 200:
+        raise LitError("Máximo 200 obras por lote.")
+    fuente = fuente or load_settings()["literatura"]["fuente"]
+    creados = []
+    for o in obras:
+        if not isinstance(o, dict):
+            continue
+        consulta = o.get("doi") or o.get("pdf_url") or o.get("titulo")
+        if not consulta:
+            continue
+        creados.append(publico(_nuevo_trabajo(str(consulta), o, fuente)))
+    if not creados:
+        raise LitError("Las obras seleccionadas no tienen DOI ni enlace PDF.")
+    threading.Thread(target=_procesar_cola, args=([c["id"] for c in creados],), daemon=True).start()
+    return creados
+
+
+def encolar_libros(libros: list[dict], fuente: str = "libgen") -> list[dict]:
+    if not isinstance(libros, list) or not libros:
+        raise LitError("No hay libros seleccionados.")
+    if len(libros) > 100:
+        raise LitError("Máximo 100 libros por lote.")
+    creados = []
+    for l in libros:
+        if isinstance(l, dict) and re.fullmatch(r"[0-9a-fA-F]{32}", str(l.get("md5", ""))):
+            t = _nuevo_trabajo(l.get("titulo") or l["md5"], l, "annas" if fuente == "annas" else "libgen")
+            t["tipo"] = "libro"
+            creados.append(publico(t))
+    if not creados:
+        raise LitError("Los libros seleccionados no son válidos.")
+    # En serie: los espejos de LibGen penalizan muchas descargas simultáneas
+    threading.Thread(target=_procesar_cola, args=([c["id"] for c in creados],), daemon=True).start()
+    return creados
 
 
 def encolar_libro(libro: dict, fuente: str = "libgen") -> dict:
@@ -595,6 +788,7 @@ def _procesar_libro(t: dict) -> None:
 def _procesar(t: dict) -> None:
     if t["fuente"] in ("libgen", "annas"):
         return _procesar_libro(t)
+    from . import navegador, resolver
     cfg = load_settings()["literatura"]
     q = t["consulta"]
     doi = normalizar_doi(q)
@@ -606,48 +800,212 @@ def _procesar(t: dict) -> None:
             t["estado"], t["documento_id"] = "duplicado", ya["id"]
             _log(t, "Ya está en tu biblioteca.", "ok")
             return
-        if not obra:
-            obra = metadatos_doi(doi)
-            t["obra"] = obra
-            if obra:
-                _log(t, f"Metadatos de OpenAlex: «{obra['titulo'][:90]}»")
     sess = sesion()
     t["_sesion"] = sess
-    intentos: list[tuple[str, str]] = []
-    if t["tipo"] == "pdf":
-        intentos.append(("directo", q))
-    if t["fuente"] in ("auto", "abierto") and obra and obra.get("pdf_url"):
-        intentos.append(("acceso abierto", obra["pdf_url"]))
-    if t["fuente"] in ("auto", "scihub") and t["tipo"] != "pdf":
-        espejos = [cfg["scihub_url"]] + [m for m in cfg.get("scihub_espejos", []) if m != cfg["scihub_url"]]
-        for m in espejos:
-            intentos.append(("sci-hub", m.rstrip("/")))
-    if not intentos:
-        t["pagina_url"] = (obra or {}).get("pagina_url")
-        raise LitError("No hay PDF de acceso abierto para esta obra. Prueba la fuente «Sci-Hub» o abre la página.")
     t["estado"] = "buscando"
+    bloqueados: list[tuple[str, str | None, str]] = []  # (página, pdf, fuente) que piden navegador real
     ultimo_error = "No se encontró el PDF."
-    for fuente, url in intentos:
+
+    def probar(url: str, fuente: str, pagina: str | None = None) -> bool:
+        nonlocal ultimo_error
+        _log(t, f"Probando {fuente}: {url[:140]}")
         try:
-            if fuente == "sci-hub":
-                _log(t, f"Usando Sci-Hub: {url}")
-                pdf_url = _resolver_scihub(t, sess, url, q, doi)
-                if pdf_url is None:
-                    continue
-                _log(t, f"URL del PDF: {pdf_url}")
-            else:
-                _log(t, f"Probando fuente {fuente}: {url}")
-                pdf_url = url
-            ruta = _descargar(t, sess, pdf_url)
-            if ruta is None:
-                continue
-            _importar(t, ruta, "sci-hub" if fuente == "sci-hub" else fuente)
-            return
+            ruta = _descargar(t, sess, url)
         except LitError as e:
             ultimo_error = str(e)
-            _log(t, str(e), "aviso")
-    t["pagina_url"] = t.get("pagina_url") or (obra or {}).get("pagina_url")
+            if any(x in str(e) for x in ("HTTP 403", "página web", "verificación")):
+                bloqueados.append((pagina or url, url, fuente))
+                _log(t, f"{fuente}: bloquea a los programas; se reintentará con la ventana de verificación.", "aviso")
+            else:
+                _log(t, str(e), "aviso")
+            return False
+        if ruta is None:
+            return False
+        return _importar_verificado(t, ruta, fuente.split(" ·")[0].lower(), doi)
+
+    def scihub() -> bool:
+        nonlocal ultimo_error
+        espejos = [cfg["scihub_url"]] + [m for m in cfg.get("scihub_espejos", []) if m != cfg["scihub_url"]]
+        for base in espejos:
+            base = base.rstrip("/")
+            _log(t, f"Usando Sci-Hub: {base}")
+            try:
+                pdf_url = _resolver_scihub(t, sess, base, q, doi)
+            except LitError as e:
+                ultimo_error = str(e)
+                _log(t, str(e), "aviso")
+                if "verificación humana" in str(e) and doi:
+                    bloqueados.append((f"{base}/{doi}", None, f"Sci-Hub ({urllib.parse.urlsplit(base).hostname})"))
+                continue
+            if pdf_url and probar(pdf_url, "Sci-Hub"):
+                return True
+        return False
+
+    # 0) PDF directo
+    if t["tipo"] == "pdf" and probar(q, "enlace directo"):
+        return
+    if t["fuente"] == "scihub" and t["tipo"] != "pdf" and scihub():
+        return
+
+    # 1-3) Repositorios, copias abiertas y página de la revista
+    if doi:
+        res = resolver.resolver(doi)
+        for linea in res.log:
+            _log(t, linea, "aviso" if "bloquea" in linea else "info")
+        if res.doi_principal:
+            doi_obj = res.doi_principal
+            ya = db.row("SELECT id FROM documentos WHERE doi=? AND papelera IS NULL", (doi_obj,))
+            if ya:
+                t["estado"], t["documento_id"] = "duplicado", ya["id"]
+                _log(t, "El artículo principal ya está en tu biblioteca.", "ok")
+                return
+            t["suplemento"] = res.suplemento
+            obra = metadatos_doi(doi_obj) or obra
+            t["obra"] = obra
+            doi, q = doi_obj, doi_obj
+        elif not obra:
+            obra = metadatos_doi(doi)
+            t["obra"] = obra
+        if obra:
+            _log(t, f"Obra: «{obra['titulo'][:90]}» ({obra.get('anio') or 's. f.'})")
+        for c in res.candidatos:
+            if c.nota == "verificar":
+                bloqueados.append((c.pagina or c.url, None, c.fuente))
+                continue
+            if probar(c.url, c.fuente, c.pagina):
+                return
+    elif obra and obra.get("pdf_url") and probar(obra["pdf_url"], "acceso abierto", obra.get("pagina_url")):
+        return
+
+    if t["fuente"] != "abierto":
+        # 4) Anna's Archive / LibGen por DOI y por título
+        if _desde_bibliotecas(t, doi, (obra or {}).get("titulo") or ("" if doi else q)):
+            return
+        # 5) Sci-Hub
+        if t["fuente"] != "scihub" and t["tipo"] != "pdf" and doi and scihub():
+            return
+
+    # 6) Ventana de verificación (Edge real) para fuentes que bloquean programas
+    if bloqueados and navegador.disponible() and cfg.get("verificacion_auto", True):
+        pagina, pdf, fuente = bloqueados[0]
+        t["estado"] = "verificando"
+        _log(t, f"Abriendo la ventana de verificación en {urllib.parse.urlsplit(pagina).hostname}…")
+        datos = navegador.capturar(pagina, pdf, (obra or {}).get("titulo") or q, log=lambda m, n="info": _log(t, m, n))
+        if datos and _importar_verificado(t, _guardar_bytes(datos), fuente.split(" ·")[0].lower(), doi):
+            return
+        _log(t, "No se pudo capturar el PDF automáticamente.", "aviso")
+    t["pagina_url"] = (bloqueados[0][0] if bloqueados else None) or t.get("pagina_url") or (obra or {}).get("pagina_url")
+    if bloqueados:
+        t["verificable"] = True
+        raise LitError("La fuente exige verificación de navegador. Pulsa «Abrir verificación» o descárgalo en la página "
+                       "y la app lo importará desde tu carpeta Descargas.")
     raise LitError(ultimo_error + " Puedes abrir la página manualmente.")
+
+
+def coincide(ruta: Path, obra: dict | None, doi: str | None) -> tuple[bool, str]:
+    """¿El PDF es realmente el artículo pedido? Busca el DOI o las palabras del título en las primeras páginas."""
+    try:
+        pdf = fitz.open(ruta)
+        texto = " ".join(pdf[i].get_text("text") for i in range(min(3, pdf.page_count))).lower()
+        pdf.close()
+    except Exception:
+        return False, "no se pudo leer el PDF"
+    texto_n = re.sub(r"\s+", " ", texto)
+    if len(texto_n.strip()) < 200:
+        return True, "PDF sin texto (escaneado): no se pudo verificar"
+    if doi and doi.lower() in texto_n.replace(" ", ""):
+        return True, "contiene el DOI"
+    titulo = (obra or {}).get("titulo") or ""
+    palabras = [w for w in re.findall(r"[a-záéíóúñü0-9]{4,}", titulo.lower())]
+    if not palabras:
+        return True, "sin título para comparar"
+    hallados = sum(1 for w in set(palabras) if w in texto_n)
+    proporcion = hallados / len(set(palabras))
+    return proporcion >= 0.6, f"{round(proporcion * 100)} % de las palabras del título"
+
+
+def _desde_bibliotecas(t: dict, doi: str | None, titulo: str) -> bool:
+    """Busca el artículo en Anna's Archive (por DOI y por título) y lo baja por md5 (LibGen / miembro)."""
+    from . import annas, libgen
+    consultas = [c for c in (doi, titulo) if c]
+    for consulta in consultas:
+        try:
+            r = annas.buscar(consulta, "titulo" if consulta == titulo else "todo")
+        except annas.AnnasError as e:
+            _log(t, "Anna's Archive: " + str(e)[:160], "aviso")
+            return False  # sin acceso al sitio: no repetir con el título
+        candidatos = [x for x in r["resultados"] if x.get("extension") in ("pdf", "")]
+        if consulta == titulo:
+            norma = lambda s: re.sub(r"\W+", " ", (s or "").lower()).strip()
+            candidatos = [x for x in candidatos if norma(titulo)[:60] in norma(x["titulo"]) or norma(x["titulo"])[:60] in norma(titulo)]
+        for item in candidatos[:3]:
+            _log(t, f"Anna's Archive: «{item['titulo'][:80]}» · md5 {item['md5']}")
+            try:
+                url, via = annas.enlace_descarga(item)
+            except annas.AnnasError as e:
+                _log(t, str(e)[:160], "aviso")
+                continue
+            _log(t, f"Descarga vía {via}")
+            try:
+                ruta = _descargar(t, t["_sesion"], url)
+            except LitError as e:
+                _log(t, str(e), "aviso")
+                continue
+            if ruta and _importar_verificado(t, ruta, "annas", doi):
+                return True
+    return False
+
+
+def _importar_verificado(t: dict, ruta: Path, origen: str, doi: str | None) -> bool:
+    ok, motivo = coincide(ruta, t.get("obra"), doi)
+    if not ok:
+        _log(t, f"El PDF descargado no corresponde al artículo ({motivo}); se descarta.", "aviso")
+        ruta.unlink(missing_ok=True)
+        return False
+    _log(t, f"Verificado: {motivo}.")
+    _importar(t, ruta, origen)
+    return True
+
+
+def abrir_verificacion(jid: str) -> dict:
+    """Reintenta un trabajo fallido con la ventana de verificación; si no se captura, vigila Descargas."""
+    from . import navegador
+    t = _trabajos.get(jid)
+    if not t or not t.get("pagina_url"):
+        raise LitError("Este trabajo no tiene página que verificar.")
+
+    def tarea():
+        inicio = time.time()
+        t["estado"] = "verificando"
+        datos = None
+        if navegador.disponible():
+            datos = navegador.capturar(t["pagina_url"], None, (t.get("obra") or {}).get("titulo") or t["consulta"],
+                                       log=lambda m, n="info": _log(t, m, n))
+        else:
+            import webbrowser
+            webbrowser.open(t["pagina_url"])
+        try:
+            if datos:
+                _importar(t, _guardar_bytes(datos), "verificación")
+                return
+            _log(t, "Descarga el PDF en la página: lo importaré en cuanto aparezca en tu carpeta Descargas (10 min).", "aviso")
+            if not navegador.disponible() or not datos:
+                import webbrowser
+                if navegador.disponible():
+                    webbrowser.open(t["pagina_url"])
+            p = navegador.vigilar_descargas(inicio)
+            if p:
+                destino = _guardar_bytes(p.read_bytes())
+                _importar(t, destino, "verificación")
+            else:
+                t["estado"] = "error"
+                _log(t, "No apareció ningún PDF nuevo en Descargas.", "error")
+        except Exception as e:
+            t["estado"] = "error"
+            _log(t, str(e)[:200], "error")
+
+    threading.Thread(target=tarea, daemon=True).start()
+    return publico(t)
 
 
 def _resolver_scihub(t: dict, sess: requests.Session, base: str, q: str, doi: str | None) -> str | None:

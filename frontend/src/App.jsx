@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Library, BookOpen, Search, Newspaper, BookA, Settings, Moon, Sun, PanelLeftClose, PanelLeftOpen, Square, SquareDashed } from 'lucide-react'
+import { Library, BookOpen, Search, Newspaper, BookA, Settings, Moon, Sun, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
 import { api } from './api.js'
 import { usePeriodico, usePref } from './ui.jsx'
 import Biblioteca from './vistas/Biblioteca.jsx'
@@ -42,7 +42,6 @@ export default function App() {
   const tema = ajustes?.apariencia?.tema || 'claro'
   const skin = ajustes?.apariencia?.skin || 'brutalista'
   useEffect(() => { document.documentElement.dataset.skin = skin }, [skin])
-  const cambiarSkin = async () => setAjustes(await api.put('/api/ajustes', { apariencia: { skin: skin === 'minimalista' ? 'brutalista' : 'minimalista' } }))
   useEffect(() => {
     document.documentElement.dataset.tema = tema
     if (ajustes?.apariencia?.acento) document.documentElement.style.setProperty('--senal', ajustes.apariencia.acento)
@@ -99,8 +98,6 @@ export default function App() {
           })}
         </div>
         <div className="nav-pie">
-          <button className="btn chico" onClick={cambiarSkin} title="Cambiar entre skin brutalista y minimalista">
-            {skin === 'minimalista' ? <Square size={14} /> : <SquareDashed size={14} />}<span className="solo-ancho">{skin === 'minimalista' ? 'Brutalista' : 'Minimalista'}</span></button>
           <button className="btn chico" onClick={cambiarTema} title="Tema claro u oscuro">{tema === 'oscuro' ? <Sun size={14} /> : <Moon size={14} />}<span className="solo-ancho">{tema === 'oscuro' ? 'Modo claro' : 'Modo oscuro'}</span></button>
           <span className="tenue solo-ancho">v{estado?.version || '—'} · {estado?.estadisticas?.documentos ?? 0} DOCS</span>
         </div>

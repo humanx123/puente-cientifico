@@ -166,3 +166,9 @@ body.redimensionando iframe, body.redimensionando img { pointer-events: none; }
 :root[data-skin='minimalista'] .lit-res .mono, :root[data-skin='minimalista'] .cuerpo-pad > .mono { font-family: var(--sans); letter-spacing: 0; }
 :root[data-skin='minimalista'] .deslizador { text-transform: none; font-size: 12px; }
 :root[data-skin='minimalista'] .nav-item .num { font-size: 11px; opacity: .6; }
+
+/* Selección múltiple de resultados */
+.barra-seleccion { position: sticky; top: -20px; z-index: 6; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin: 0 0 14px; background: var(--papel); border: var(--borde-g) solid var(--tinta); box-shadow: var(--sombra-s); }
+.obra.marcada { outline: 3px solid var(--senal); outline-offset: -1px; }
+:root[data-skin='minimalista'] .barra-seleccion { border: 1px solid var(--linea); border-radius: 10px; box-shadow: var(--sombra); }
+:root[data-skin='minimalista'] .obra.marcada { outline: 2px solid var(--senal); }

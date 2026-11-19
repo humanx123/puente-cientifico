@@ -189,6 +189,9 @@ def buscar(q: str, modo: str = "todo", tipos: list[str] | None = None, extension
         params.append(("sort", ORDEN[orden]))
     r, base = _get("/search", params=dict(params) if len({k for k, _ in params}) == len(params) else params)
     res = parsear_tabla(r.text, base)
+    if idioma:  # el sitio ya filtra; se refuerza con la columna de idiomas («Spanish [es]»)
+        cod = idioma.lower()[:5]
+        res = [x for x in res if not x["idioma"] or f"[{cod}]" in x["idioma"].lower() or cod in x["idioma"].lower()]
     # El sitio no tiene búsqueda por campo: se afina en el cliente
     claves = [w.lower() for w in re.findall(r"\w{2,}", q)]
     if modo == "autor" and claves:

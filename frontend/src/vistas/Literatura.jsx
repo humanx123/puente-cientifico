@@ -1,15 +1,17 @@
 import { useEffect, useState } from 'react'
 import {
   Search, Download, ExternalLink, BookOpen, Unlock, Quote, Trash2, Zap, Loader2, ShieldAlert, ChevronDown,
-  User, X, BookMarked, Library as LibIcon, FolderOpen, Shield, ShieldOff,
+  User, X, BookMarked, Library as LibIcon, FolderOpen, Shield, ShieldOff, Sparkles,
 } from 'lucide-react'
 import { api, abrirRuta, abrirUrl, qs } from '../api.js'
 import { Cabecera, Campo, Casilla, Modal, PanelLateral, useAviso, usePeriodico, usePref, Vacio } from '../ui.jsx'
 
 const ESTADOS = {
   en_cola: ['EN COLA', ''], buscando: ['BUSCANDO', 'acido'], descargando: ['DESCARGANDO', 'acido'], captcha: ['CAPTCHA', 'senal'],
-  ok: ['LISTO', 'verde'], duplicado: ['YA EXISTÍA', 'azul'], error: ['ERROR', 'rojo'],
+  ok: ['LISTO', 'verde'], duplicado: ['YA EXISTÍA', 'azul'], error: ['ERROR', 'rojo'], verificando: ['VERIFICANDO', 'senal'],
 }
+const IDIOMAS_LIB = [['', 'Todos los idiomas'], ['es', 'Español'], ['en', 'Inglés'], ['pt', 'Portugués'], ['fr', 'Francés'],
+  ['de', 'Alemán'], ['it', 'Italiano'], ['ca', 'Catalán'], ['ru', 'Ruso'], ['zh', 'Chino'], ['ja', 'Japonés'], ['ar', 'Árabe'], ['nl', 'Neerlandés']]
 const MODOS = [['todo', 'Todo'], ['titulo', 'Título'], ['autor', 'Autor'], ['titulo_autor', 'Título + autor']]
 const TEMAS_LG = [['libros', 'Libros'], ['ficcion', 'Ficción'], ['comics', 'Cómics'], ['revistas', 'Revistas'], ['normas', 'Normas']]
 const TIPOS_AA = [['libros', 'No ficción'], ['ficcion', 'Ficción'], ['articulos', 'Artículos'], ['revistas', 'Revistas'], ['comics', 'Cómics'], ['normas', 'Normas']]
@@ -46,10 +48,36 @@ function TunelChip() {
   )
 }
 
-function BarraModo({ modo, setModo }) {
+// Selección múltiple: casilla por resultado + barra fija con las acciones del lote
+function useSeleccion(lista, clave) {
+  const [sel, setSel] = useState({})
+  useEffect(() => { setSel({}) }, [lista === null]) // nueva búsqueda
+  const n = Object.keys(sel).length
+  const alternar = (it) => setSel((s) => { const c = { ...s }; const k = it[clave]; if (c[k]) delete c[k]; else c[k] = it; return c })
+  const todos = () => setSel(Object.fromEntries((lista || []).map((it) => [it[clave], it])))
+  return { sel, n, alternar, todos, limpiar: () => setSel({}), marcado: (it) => !!sel[it[clave]] }
+}
+
+function BarraSeleccion({ s, total, children }) {
+  if (!total) return null
+  return (
+    <div className="barra-seleccion">
+      <label className="casilla">
+        <input type="checkbox" checked={s.n > 0 && s.n >= total} ref={(el) => { if (el) el.indeterminate = s.n > 0 && s.n < total }}
+          onChange={(e) => (e.target.checked ? s.todos() : s.limpiar())} />
+        {s.n ? `${s.n} seleccionados` : 'Seleccionar todos'}
+      </label>
+      {s.n > 0 && <button className="btn chico fantasma" onClick={s.limpiar}><X size={12} />Quitar selección</button>}
+      <span className="espaciador" />
+      {s.n > 0 && children}
+    </div>
+  )
+}
+
+function BarraModo({ modo, setModo, extra = [] }) {
   return (
     <div className="grupo-btn">
-      {MODOS.map(([k, t]) => <button key={k} type="button" className={`btn chico ${modo === k ? 'activo' : ''}`} onClick={() => setModo(k)}>{t}</button>)}
+      {[...MODOS, ...extra].map(([k, t]) => <button key={k} type="button" className={`btn chico ${modo === k ? 'activo' : ''}`} onClick={() => setModo(k)}>{t}</button>)}
     </div>
   )
 }
@@ -111,7 +139,7 @@ export default function Literatura({ trabajos, abrirDoc, ajustes }) {
               {trabajos.length === 0 && <div className="tenue" style={{ padding: 16, fontSize: 13 }}>Las descargas aparecerán aquí con su registro en tiempo real.</div>}
               {trabajos.map((t) => {
                 const [txt, cls] = ESTADOS[t.estado] || [t.estado, '']
-                const ab = abiertos[t.id] ?? ['captcha', 'error', 'buscando', 'descargando'].includes(t.estado)
+                const ab = abiertos[t.id] ?? ['captcha', 'error', 'buscando', 'descargando', 'verificando'].includes(t.estado)
                 return (
                   <div key={t.id} className="trabajo">
                     <div className="fila" style={{ cursor: 'pointer' }} onClick={() => setAbiertos((a) => ({ ...a, [t.id]: !ab }))}>
@@ -123,7 +151,10 @@ export default function Literatura({ trabajos, abrirDoc, ajustes }) {
                     <div className="fila">
                       {t.documento_id && <button className="btn chico primario" onClick={() => abrirDoc(t.documento_id)}><BookOpen size={12} />Abrir</button>}
                       {!t.documento_id && t.archivo && <button className="btn chico" onClick={() => abrirRuta(t.archivo, true)}><FolderOpen size={12} />Mostrar archivo</button>}
+                      {t.estado === 'error' && t.verificable && <button className="btn chico primario" title="Abre un navegador integrado para superar la verificación y capturar el PDF"
+                        onClick={() => api.post(`/api/literatura/trabajos/${t.id}/verificar`).catch((e) => avisar(e.message, 'error'))}><Shield size={12} />Abrir verificación</button>}
                       {t.estado === 'error' && t.pagina_url && <button className="btn chico" onClick={() => abrirUrl(t.pagina_url)}><ExternalLink size={12} />Abrir página</button>}
+                      {t.suplemento?.length > 0 && t.suplemento.map((s) => <button key={s.url} className="btn chico fantasma" title="Material suplementario del artículo" onClick={() => abrirUrl(s.url)}><Download size={12} />{s.nombre}</button>)}
                       {t.estado === 'error' && <button className="btn chico" onClick={() => reintentar(t)}>Reintentar</button>}
                     </div>
                   </div>
@@ -165,26 +196,44 @@ function Articulos({ descargar }) {
   const [res, setRes] = useState(null)
   const [cargando, setCargando] = useState(false)
   const [ultima, setUltima] = useState(null)
+  const seleccion = useSeleccion(res?.obras || null, 'id')
+  const descargarSel = async (fuente) => {
+    try {
+      const r = await api.post('/api/literatura/descargar', { obras: Object.values(seleccion.sel), fuente })
+      avisar(`${r.length} artículos añadidos a la cola.`, 'ok'); seleccion.limpiar()
+    } catch (e) { avisar(e.message, 'error') }
+  }
 
   const consultar = async (params, pagina = 1) => {
     setCargando(true)
     try {
       const r = await api.get('/api/literatura/buscar' + qs({ ...params, pagina, abierto, desde, hasta, orden }))
+      if (pagina === 1) seleccion.limpiar()
       setRes(pagina === 1 ? r : { ...r, obras: [...(res?.obras || []), ...r.obras] })
       setUltima(params)
+      if (r.aviso && pagina === 1) avisar(r.aviso, 'info', 9000)
     } catch (err) { avisar(err.message, 'error') } finally { setCargando(false) }
+  }
+  const buscarIA = async () => {
+    setCargando(true); setAutor(null)
+    try {
+      const r = await api.post('/api/literatura/buscar-ia', { pregunta: q, abierto })
+      seleccion.limpiar(); setRes(r); setUltima(null)
+      if (r.aviso) avisar(r.aviso, 'info', 9000)
+    } catch (err) { avisar(err.message, 'error', 9000) } finally { setCargando(false) }
   }
   const buscar = (e) => {
     e?.preventDefault()
     if (!q.trim() && !q2.trim()) return
     setAutor(null)
-    if (modo === 'titulo_autor') consultar({ titulo: q, autor: q2 })
+    if (modo === 'ia') buscarIA()
+    else if (modo === 'titulo_autor') consultar({ titulo: q, autor: q2 })
     else consultar({ q, modo })
   }
   const porAutor = async (a) => {
     if (a.id) {
       setAutor({ id: a.id, nombre: a.nombre, cargando: true })
-      consultar({ autor_id: a.id })
+      consultar({ autor_id: a.id, autor_nombre: a.nombre })
       try { setAutor(await api.get(`/api/literatura/autor/${a.id}`)) } catch { /* sin ficha */ }
     } else {
       setModo('autor'); setQ(a.nombre || a); setAutor(null); consultar({ q: a.nombre || a, modo: 'autor' })
@@ -195,12 +244,13 @@ function Articulos({ descargar }) {
   return (
     <>
       <form onSubmit={buscar} className="col" style={{ marginBottom: 20 }}>
-        <BarraModo modo={modo} setModo={setModo} />
+        <BarraModo modo={modo} setModo={setModo} extra={[['ia', '✦ Con IA']]} />
         <div className="fila">
           <div className="busqueda" style={{ flex: 1 }}>
-            {modo === 'autor' ? <User size={17} /> : <Search size={17} />}
+            {modo === 'autor' ? <User size={17} /> : modo === 'ia' ? <Sparkles size={17} /> : <Search size={17} />}
             <input autoFocus className="entrada" style={{ fontSize: 16, padding: '12px 12px 12px 36px' }}
-              placeholder={{ todo: 'Palabras clave, título o DOI', titulo: 'Título del artículo', autor: 'Nombre del autor (ej. Bruce Alberts)', titulo_autor: 'Título' }[modo]}
+              placeholder={{ todo: 'Palabras clave, título o DOI', titulo: 'Título del artículo', autor: 'Nombre del autor (ej. Bruce Alberts)', titulo_autor: 'Título',
+                ia: 'Describe lo que buscas, p. ej.: antivirales que inhiban la polimerasa del sarampión, estudios de 2020 en adelante' }[modo]}
               value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           {modo === 'titulo_autor' && (
@@ -230,19 +280,40 @@ function Articulos({ descargar }) {
         </div>
       )}
 
+      {res?.plan && (
+        <div className="banda-autor">
+          <div className="fila"><Sparkles size={16} /><b>Búsqueda con IA</b><span className="mono" style={{ fontSize: 11 }}>{res.modelo}</span></div>
+          {res.plan.explicacion && <div style={{ fontSize: 12.5 }}>{res.plan.explicacion}</div>}
+          <div className="chips">{res.plan.consultas.map((c) => <span key={c} className="chip">{c}</span>)}
+            {res.plan.autor && <span className="chip">autor: {res.plan.autor}</span>}
+            {(res.plan.desde || res.plan.hasta) && <span className="chip">{res.plan.desde || '…'}–{res.plan.hasta || '…'}</span>}</div>
+        </div>
+      )}
       {!res && <Vacio titulo="Busca en 250 millones de obras">
         <p style={{ margin: 0, maxWidth: 560 }}>Metadatos de <b>OpenAlex</b>. Busca por título, por autor o por ambos. Haz clic en cualquier autor de los resultados para ver todas sus obras.</p>
       </Vacio>}
       {res && <div className="fila" style={{ marginBottom: 12 }}>
         <span className="mono" style={{ fontSize: 12 }}>{res.total.toLocaleString('es-MX')} RESULTADOS</span>
-        {res.creditos?.restantes && <span className={`chip ${Number(res.creditos.restantes) < 150 ? 'acido' : ''}`} title="Cada búsqueda en OpenAlex gasta créditos; con una clave gratuita el límite es mayor. Las búsquedas repetidas usan caché.">
+        {res.fuente === 'crossref' && <span className="chip azul" title="Resultados de Crossref: gratuitos y sin cupo diario">Fuente: Crossref</span>}
+        {res.fuente !== 'crossref' && res.creditos?.restantes && <span className={`chip ${Number(res.creditos.restantes) < 150 ? 'acido' : ''}`} title="Cada búsqueda en OpenAlex gasta créditos; con una clave gratuita el límite es mayor. Las búsquedas repetidas usan caché.">
           Créditos OpenAlex: {res.creditos.restantes}/{res.creditos.limite}</span>}
       </div>}
+      <BarraSeleccion s={seleccion} total={res?.obras.length}>
+        <button className="btn chico primario" onClick={() => descargarSel('auto')}><Download size={13} />Descargar {seleccion.n}</button>
+        <button className="btn chico" onClick={() => descargarSel('abierto')}><Unlock size={13} />Solo acceso abierto</button>
+        <button className="btn chico negro" onClick={() => descargarSel('scihub')}><Zap size={13} />Sci-Hub</button>
+      </BarraSeleccion>
       {res?.obras.map((o) => (
-        <div key={o.id} className="obra">
-          <h3>{o.titulo}</h3>
+        <div key={o.id} className={`obra ${seleccion.marcado(o) ? 'marcada' : ''}`}>
+          <div className="fila" style={{ alignItems: 'flex-start', flexWrap: 'nowrap' }}>
+            <label className="casilla" style={{ marginTop: 2 }} title="Seleccionar para descargar en lote">
+              <input type="checkbox" checked={seleccion.marcado(o)} onChange={() => seleccion.alternar(o)} /></label>
+            <h3 style={{ flex: 1 }}>{o.titulo}</h3>
+          </div>
           <div className="autores"><Autores lista={o.autores_det?.length ? o.autores_det : o.autores} onAutor={porAutor} /></div>
           <div className="meta">{[o.anio, o.revista, o.doi && `DOI ${o.doi}`].filter(Boolean).join(' · ')}</div>
+          {o.motivo_ia && <div style={{ fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span className={`chip ${o.relevancia >= 7 ? 'verde' : o.relevancia >= 4 ? 'acido' : ''}`}>IA {o.relevancia}/10</span><span className="tenue">{o.motivo_ia}</span></div>}
           <div className="chips">
             {o.acceso_abierto && <span className="chip verde"><Unlock size={11} />Acceso abierto{o.estado_oa ? ` · ${o.estado_oa}` : ''}</span>}
             {o.pdf_url && <span className="chip">PDF libre</span>}
@@ -273,12 +344,19 @@ function Libros({ fuente, descargarLibro }) {
   const [q, setQ] = useState('')
   const [temas, setTemas] = usePref(`${fuente}.temas`, esAA ? [] : ['libros'])
   const [ext, setExt] = useState('')
-  const [idioma, setIdioma] = useState('')
+  const [idioma, setIdioma] = usePref(`${fuente}.idioma`, '')
   const [anio, setAnio] = useState('')
   const [orden, setOrden] = useState('relevancia')
   const [res, setRes] = useState(null)
   const [cargando, setCargando] = useState(false)
   const [ultima, setUltima] = useState(null)
+  const seleccion = useSeleccion(res?.lista || null, 'md5')
+  const descargarSel = async () => {
+    try {
+      const r = await api.post('/api/libgen/descargar', { libros: Object.values(seleccion.sel), fuente })
+      avisar(`${r.length} libros añadidos a la cola (se descargan uno tras otro).`, 'ok'); seleccion.limpiar()
+    } catch (e) { avisar(e.message, 'error') }
+  }
 
   const consultar = async (texto, m, pagina = 1) => {
     if (!texto?.trim()) return
@@ -288,6 +366,7 @@ function Libros({ fuente, descargarLibro }) {
         ? await api.get('/api/annas/buscar' + qs({ q: texto, modo: m, tipos: temas.join(','), extension: ext, idioma, orden, pagina }))
         : await api.get('/api/libgen/buscar' + qs({ q: texto, modo: m, temas: temas.join(','), pagina, extension: ext, idioma, anio }))
       const lista = esAA ? r.resultados : r.libros
+      if (pagina === 1) seleccion.limpiar()
       setRes(pagina === 1 ? { ...r, lista } : { ...r, lista: [...(res?.lista || []), ...lista] })
       setUltima({ texto, m })
     } catch (e) { avisar(e.message, 'error', 9000) } finally { setCargando(false) }
@@ -314,7 +393,9 @@ function Libros({ fuente, descargarLibro }) {
           <select className="entrada" style={{ width: 120 }} value={ext} onChange={(e) => setExt(e.target.value)}>
             <option value="">Formato</option>{['pdf', 'epub', 'mobi', 'djvu', 'fb2', 'azw3'].map((x) => <option key={x} value={x}>{x.toUpperCase()}</option>)}
           </select>
-          <input className="entrada" style={{ width: 120 }} placeholder={esAA ? 'Idioma (es, en)' : 'Idioma'} value={idioma} onChange={(e) => setIdioma(e.target.value)} />
+          <select className="entrada" style={{ width: 150 }} value={idioma} onChange={(e) => setIdioma(e.target.value)} title="Idioma del libro">
+            {IDIOMAS_LIB.map(([k, t]) => <option key={k} value={k}>{t}</option>)}
+          </select>
           {esAA ? (
             <select className="entrada" style={{ width: 150 }} value={orden} onChange={(e) => setOrden(e.target.value)}>
               <option value="relevancia">Relevancia</option><option value="recientes">Más recientes</option><option value="antiguos">Más antiguos</option>
@@ -330,8 +411,13 @@ function Libros({ fuente, descargarLibro }) {
           : 'Libros, ficción, cómics, revistas y normas mediante libgen-api-enhanced. EPUB, MOBI, FB2 y CBZ se convierten a PDF para leerlos, anotarlos y traducirlos.'}</p>
       </Vacio>}
       {res && <div className="mono" style={{ marginBottom: 12, fontSize: 12 }}>{res.lista.length} RESULTADOS{res.dominio ? ` · ${res.dominio.replace('https://', '')}` : ''}</div>}
+      <BarraSeleccion s={seleccion} total={res?.lista.length}>
+        <button className="btn chico primario" onClick={descargarSel}><Download size={13} />Descargar {seleccion.n} a la biblioteca</button>
+      </BarraSeleccion>
       {res?.lista.map((l) => (
-        <div key={l.md5} className="obra libro">
+        <div key={l.md5} className={`obra libro ${seleccion.marcado(l) ? 'marcada' : ''}`} style={{ gridTemplateColumns: '22px 64px 1fr' }}>
+          <label className="casilla" style={{ alignSelf: 'start', marginTop: 2 }} title="Seleccionar para descargar en lote">
+            <input type="checkbox" checked={seleccion.marcado(l)} onChange={() => seleccion.alternar(l)} /></label>
           <img className="tapa" alt="" loading="lazy" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
             src={'/api/portada' + qs({ url: l.portada || '', titulo: l.titulo, autor: l.autor })} />
           <div className="col" style={{ gap: 6, minWidth: 0 }}>

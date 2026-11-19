@@ -534,8 +534,30 @@ def resumen(doc_id: int):
 # ---------------------------------------------------------------------------
 @app.get("/api/literatura/buscar")
 def lit_buscar(q: str = "", pagina: int = 1, abierto: bool = False, desde: int | None = None, hasta: int | None = None,
-               orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = ""):
-    return literature.buscar(q, pagina, abierto, desde, hasta, orden, modo, titulo, autor, autor_id)
+               orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = "",
+               autor_nombre: str = ""):
+    return literature.buscar(q, pagina, abierto, desde, hasta, orden, modo, titulo, autor, autor_id, autor_nombre)
+
+
+@app.post("/api/literatura/buscar-ia")
+def lit_buscar_ia(datos: dict = Body(...)):
+    from puente import busqueda_ia
+    return busqueda_ia.buscar(datos.get("pregunta", ""), bool(datos.get("abierto")))
+
+
+@app.post("/api/literatura/trabajos/{jid}/verificar")
+def lit_verificar(jid: str):
+    return literature.abrir_verificacion(jid)
+
+
+@app.post("/api/literatura/probar-openalex")
+def lit_probar_openalex():
+    return literature.probar_openalex()
+
+
+@app.get("/api/literatura/creditos")
+def lit_creditos():
+    return literature.creditos()
 
 
 @app.get("/api/literatura/autor/{aid}")
@@ -560,6 +582,8 @@ def libgen_buscar(q: str, modo: str = "todo", temas: str = "libros", pagina: int
 
 @app.post("/api/libgen/descargar")
 def libgen_descargar(datos: dict = Body(...)):
+    if datos.get("libros"):
+        return literature.encolar_libros(datos["libros"], datos.get("fuente", "libgen"))
     return literature.encolar_libro(datos.get("libro"), datos.get("fuente", "libgen"))
 
 
@@ -636,6 +660,8 @@ def tunel_accion(accion: str):
 
 @app.post("/api/literatura/descargar")
 def lit_descargar(datos: dict = Body(...)):
+    if datos.get("obras"):
+        return literature.encolar_obras(datos["obras"], datos.get("fuente"))
     return literature.encolar(datos.get("consultas", ""), datos.get("fuente"), datos.get("obra"))
 
 

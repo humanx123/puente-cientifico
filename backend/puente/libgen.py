@@ -105,13 +105,25 @@ def _libro(b: Book) -> dict | None:
     }
 
 
+IDIOMAS = {"es": "Spanish", "en": "English", "pt": "Portuguese", "fr": "French", "de": "German", "it": "Italian",
+           "ru": "Russian", "zh": "Chinese", "ja": "Japanese", "ar": "Arabic", "ca": "Catalan", "nl": "Dutch"}
+# Variantes con que LibGen escribe el idioma (a veces en el propio idioma)
+VARIANTES = {"Spanish": ("spanish", "español", "espanol", "castellano"), "English": ("english",),
+             "Portuguese": ("portuguese", "português", "portugues"), "French": ("french", "français", "francais"),
+             "German": ("german", "deutsch"), "Italian": ("italian", "italiano"), "Russian": ("russian", "русский"),
+             "Chinese": ("chinese", "中文"), "Japanese": ("japanese", "日本語"), "Arabic": ("arabic",),
+             "Catalan": ("catalan", "català"), "Dutch": ("dutch", "nederlands")}
+
+
 def buscar(q: str, modo: str = "todo", temas: list[str] | None = None, pagina: int = 1,
            extension: str = "", idioma: str = "", anio: str = "") -> dict:
+    idioma = IDIOMAS.get((idioma or "").lower(), idioma or "")
     q = (q or "").strip()
     if len(q) < 3:
         raise LibgenError("LibGen necesita al menos 3 caracteres.")
     temas_ok = [TEMAS[t] for t in (temas or ["libros"]) if t in TEMAS] or [SearchTopic.LIBGEN]
-    filtros = {k: v for k, v in (("extension", extension.lower()), ("language", idioma), ("year", anio)) if v}
+    # El idioma se filtra después (LibGen lo escribe de varias formas: «Spanish», «Español»…)
+    filtros = {k: v for k, v in (("extension", extension.lower()), ("year", anio)) if v}
     s = _cliente()
     pagina = max(1, min(int(pagina), 50))
 
@@ -130,8 +142,11 @@ def buscar(q: str, modo: str = "todo", temas: list[str] | None = None, pagina: i
 
     crudos = _con_limite(consulta, 45, "buscar")
     libros, vistos = [], set()
+    variantes = VARIANTES.get(idioma, (idioma.lower(),)) if idioma else ()
     for b in crudos:
         l = _libro(b)
+        if l and variantes and not any(v in l["idioma"].lower() for v in variantes):
+            continue
         if l and l["md5"] not in vistos:
             vistos.add(l["md5"])
             libros.append(l)

@@ -85,6 +85,8 @@ DEFAULT_SETTINGS = {
         "proxy_puerto": "7890",
         "proxy_usuario": "",
         "proxy_clave": "",
+        "verificacion_auto": True,  # abrir la ventana de verificación si una fuente bloquea programas
+        "metadatos": "auto",  # auto (OpenAlex → Crossref si se agota) | openalex | crossref
         "openalex_correo": "",
         "openalex_clave": "",
         "guardar_copia_en": "",  # carpeta extra donde dejar el PDF además de la biblioteca
