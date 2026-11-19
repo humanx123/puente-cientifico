@@ -88,15 +88,38 @@ def _index_text(doc_id: int, pdf: fitz.Document, tipo: str = "original") -> None
                 )
 
 
+EBOOKS = {".epub", ".mobi", ".fb2", ".cbz", ".xps", ".oxps"}
+
+
+def convertir_a_pdf(src: Path) -> Path:
+    """EPUB, MOBI, FB2, CBZ y XPS → PDF (PyMuPDF maqueta el libro en páginas)."""
+    try:
+        doc = fitz.open(src, filetype=src.suffix.lstrip(".").lower())
+        datos = doc.convert_to_pdf()
+        doc.close()
+    except Exception as e:
+        raise LibraryError(f"No se pudo convertir {src.suffix} a PDF: {e}") from None
+    out = CACHE_DIR / f"convertido-{hashlib.sha1(str(src).encode()).hexdigest()[:12]}.pdf"
+    out.write_bytes(datos)
+    return out
+
+
 def import_pdf(src: Path, *, title: str | None = None, authors: str = "", year: int | None = None,
                doi: str | None = None, origen: str = "importado", carpeta_id: int | None = None) -> dict:
     src = Path(src)
     if not src.exists():
         raise LibraryError(f"No existe el archivo: {src}")
+    if src.suffix.lower() in EBOOKS:
+        convertido = convertir_a_pdf(src)
+        try:
+            return import_pdf(convertido, title=title or src.stem, authors=authors, year=year, doi=doi,
+                              origen=origen, carpeta_id=carpeta_id)
+        finally:
+            convertido.unlink(missing_ok=True)
     with open(src, "rb") as f:
         head = f.read(1024)
     if b"%PDF-" not in head:
-        raise LibraryError("El archivo no es un PDF válido.")
+        raise LibraryError("El archivo no es un PDF ni un libro electrónico compatible (EPUB, MOBI, FB2, CBZ, XPS).")
     sha = _sha256(src)
     existing = db.row("SELECT * FROM documentos WHERE sha256=?", (sha,))
     if existing:

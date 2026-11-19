@@ -134,7 +134,8 @@ def dialogo(datos: dict = Body(...)):
     elif tipo == "guardar":
         res = ventana.create_file_dialog(webview.SAVE_DIALOG, save_filename=datos.get("nombre", "archivo.pdf"))
     else:
-        filtros = tuple(datos.get("filtros") or ("Documentos PDF (*.pdf)", "Todos los archivos (*.*)"))
+        filtros = tuple(datos.get("filtros") or ("PDF y libros (*.pdf;*.epub;*.mobi;*.fb2;*.cbz;*.xps)",
+                                                 "Documentos PDF (*.pdf)", "Todos los archivos (*.*)"))
         res = ventana.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=bool(datos.get("multiple", True)),
                                          file_types=filtros)
     if not res:
@@ -172,7 +173,11 @@ def documentos(vista: str = "todos", carpeta: int | None = None, q: str = "", or
 async def subir(archivos: list[UploadFile] = File(...), carpeta: int | None = None):
     resultados = []
     for a in archivos:
-        tmp = Path(tempfile.mkstemp(suffix=".pdf")[1])
+        sufijo = Path(a.filename or "x.pdf").suffix.lower()
+        sufijo = sufijo if sufijo in library.EBOOKS | {".pdf"} else ".pdf"
+        fd, nombre_tmp = tempfile.mkstemp(suffix=sufijo)
+        os.close(fd)
+        tmp = Path(nombre_tmp)
         try:
             with open(tmp, "wb") as f:
                 shutil.copyfileobj(a.file, f)
@@ -195,7 +200,7 @@ def importar_rutas(datos: dict = Body(...)):
     for r in datos.get("rutas", []):
         p = Path(r)
         if p.is_dir():
-            rutas += sorted(p.rglob("*.pdf"))
+            rutas += sorted(x for x in p.rglob("*") if x.suffix.lower() in library.EBOOKS | {".pdf"})
         else:
             rutas.append(p)
     resultados = []
@@ -528,9 +533,105 @@ def resumen(doc_id: int):
 # Literatura
 # ---------------------------------------------------------------------------
 @app.get("/api/literatura/buscar")
-def lit_buscar(q: str, pagina: int = 1, abierto: bool = False, desde: int | None = None, hasta: int | None = None,
-               orden: str = "relevancia"):
-    return literature.buscar(q, pagina, abierto, desde, hasta, orden)
+def lit_buscar(q: str = "", pagina: int = 1, abierto: bool = False, desde: int | None = None, hasta: int | None = None,
+               orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = ""):
+    return literature.buscar(q, pagina, abierto, desde, hasta, orden, modo, titulo, autor, autor_id)
+
+
+@app.get("/api/literatura/autor/{aid}")
+def lit_autor(aid: str):
+    return literature.autor(aid)
+
+
+@app.get("/api/literatura/autores")
+def lit_autores(q: str):
+    return literature.buscar_autores(q)
+
+
+@app.get("/api/libgen/buscar")
+def libgen_buscar(q: str, modo: str = "todo", temas: str = "libros", pagina: int = 1, extension: str = "",
+                  idioma: str = "", anio: str = ""):
+    from puente import libgen
+    try:
+        return libgen.buscar(q, modo, [t for t in temas.split(",") if t], pagina, extension, idioma, anio)
+    except libgen.LibgenError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/libgen/descargar")
+def libgen_descargar(datos: dict = Body(...)):
+    return literature.encolar_libro(datos.get("libro"), datos.get("fuente", "libgen"))
+
+
+def _bajar_imagen(url: str) -> bytes:
+    literature.url_publica(url)
+    try:
+        r = literature.sesion().get(url, timeout=20, stream=True)
+    except Exception:
+        return b""
+    if r.status_code != 200 or not r.headers.get("Content-Type", "").startswith("image/"):
+        return b""
+    datos = r.raw.read(3 * 1024 * 1024 + 1, decode_content=True)
+    return datos if 200 < len(datos) <= 3 * 1024 * 1024 else b""
+
+
+@app.get("/api/portada")
+def portada(url: str = "", titulo: str = "", autor: str = ""):
+    """Portadas de LibGen/Anna's pedidas desde aquí (por el túnel si está activo) y en caché.
+    LibGen a veces sirve portadas vacías: entonces se busca en Open Library por título y autor."""
+    import hashlib
+    from puente.config import CACHE_DIR
+    carpeta = CACHE_DIR / "portadas"
+    carpeta.mkdir(exist_ok=True)
+    ruta = carpeta / (hashlib.sha1(f"{url}|{titulo}|{autor}".encode()).hexdigest() + ".img")
+    vacia = ruta.with_suffix(".sin")
+    if not ruta.exists():
+        if vacia.exists():
+            raise HTTPException(404, "Portada no disponible.")
+        datos = _bajar_imagen(url) if url else b""
+        if not datos and titulo:
+            try:
+                r = literature.sesion().get("https://openlibrary.org/search.json", timeout=15, params={
+                    "title": titulo[:120], "author": (autor or "").split(";")[0].split(",")[0][:80], "limit": 1, "fields": "cover_i"})
+                cid = (r.json().get("docs") or [{}])[0].get("cover_i")
+                if cid:
+                    datos = _bajar_imagen(f"https://covers.openlibrary.org/b/id/{int(cid)}-M.jpg")
+            except Exception:
+                datos = b""
+        if not datos:
+            vacia.touch()  # no volver a intentar en cada render
+            raise HTTPException(404, "Portada no disponible.")
+        ruta.write_bytes(datos)
+    return FileResponse(ruta, media_type="image/jpeg", headers={"Cache-Control": "max-age=604800"})
+
+
+@app.get("/api/annas/buscar")
+def annas_buscar(q: str, modo: str = "todo", tipos: str = "", extension: str = "", idioma: str = "",
+                 orden: str = "relevancia", pagina: int = 1):
+    from puente import annas
+    try:
+        return annas.buscar(q, modo, [t for t in tipos.split(",") if t], extension, idioma, orden, pagina)
+    except annas.AnnasError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/api/tunel")
+def tunel_estado():
+    from puente import tunel
+    return tunel.estado()
+
+
+@app.post("/api/tunel/{accion}")
+def tunel_accion(accion: str):
+    from puente import tunel
+    if accion == "iniciar":
+        try:
+            return tunel.iniciar()
+        except RuntimeError as e:
+            raise HTTPException(400, str(e))
+    if accion == "detener":
+        return tunel.detener()
+    raise HTTPException(404, "Acción desconocida.")
 
 
 @app.post("/api/literatura/descargar")

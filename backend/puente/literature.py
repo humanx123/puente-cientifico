@@ -121,14 +121,19 @@ def sesion() -> requests.Session:
     s = load_settings()["literatura"]
     sess = requests.Session()
     sess.headers.update({"User-Agent": s["agente_usuario"], "Accept-Language": "es,en;q=0.8"})
-    if s.get("proxy_activo"):
-        auth = ""
-        if s.get("proxy_usuario"):
-            auth = urllib.parse.quote(s["proxy_usuario"]) + ":" + urllib.parse.quote(s.get("proxy_clave", "")) + "@"
-        esquema = "socks5h" if s.get("proxy_tipo") == "socks5" else "http"
-        proxy = f"{esquema}://{auth}{s['proxy_host']}:{s['proxy_puerto']}"
-        sess.proxies = {"http": proxy, "https": proxy}
-    adapter = requests.adapters.HTTPAdapter(max_retries=int(s.get("reintentos", 3)))
+    from . import tunel
+    try:
+        prox = tunel.proxies()  # Tor integrado o proxy de tu VPN; None = directo
+    except RuntimeError as e:
+        raise LitError(str(e)) from None
+    if prox:
+        sess.trust_env = False
+        sess.proxies = prox
+    n = int(s.get("reintentos", 3))
+    # Reintentos solo de red: nada de dormir con Retry-After en 429/503 (la app parecía colgada)
+    reintentos = urllib3.util.Retry(total=n, connect=n, read=1, status=0, redirect=8, backoff_factor=0.4,
+                                    respect_retry_after_header=False, raise_on_status=False)
+    adapter = requests.adapters.HTTPAdapter(max_retries=reintentos)
     sess.mount("http://", adapter)
     sess.mount("https://", adapter)
     return sess
@@ -159,18 +164,21 @@ def _obra(raw: dict) -> dict | None:
     pdf = next((x.get("pdf_url") for x in ubicaciones if x.get("is_oa") and x.get("pdf_url")), None)
     pagina = next((x.get("landing_page_url") for x in ubicaciones if x.get("landing_page_url")), None)
     pagina = pagina or (f"https://doi.org/{doi}" if doi else None)
-    autores = []
+    autores, autores_det = [], []
     for a in raw.get("authorships") or []:
-        nombre = _limpiar((a.get("author") or {}).get("display_name"), 120)
+        au = a.get("author") or {}
+        nombre = _limpiar(au.get("display_name"), 120)
         if nombre and nombre not in autores:
             autores.append(nombre)
-        if len(autores) >= 8:
+            aid = (au.get("id") or "").rsplit("/", 1)[-1]
+            autores_det.append({"nombre": nombre, "id": aid if aid.startswith("A") else ""})
+        if len(autores) >= 12:
             break
     revista = next((_limpiar((x.get("source") or {}).get("display_name"), 240) for x in ubicaciones
                     if isinstance(x.get("source"), dict) and x["source"].get("display_name")), None)
     oa = raw.get("open_access") or {}
     return {
-        "id": ident, "titulo": titulo, "autores": autores, "anio": raw.get("publication_year"),
+        "id": ident, "titulo": titulo, "autores": autores, "autores_det": autores_det, "anio": raw.get("publication_year"),
         "revista": revista, "doi": doi, "pagina_url": pagina, "pdf_url": pdf,
         "acceso_abierto": bool(oa.get("is_oa")), "estado_oa": oa.get("oa_status"),
         "citas": raw.get("cited_by_count"), "tipo": raw.get("type"),
@@ -178,23 +186,56 @@ def _obra(raw: dict) -> dict | None:
     }
 
 
-def buscar(q: str, pagina: int = 1, solo_abierto: bool = False, desde: int | None = None, hasta: int | None = None,
-           orden: str = "relevancia") -> dict:
-    q = (q or "").strip()
-    if not 1 <= len(q) <= 1024:
-        raise LitError("Escribe un título, palabras clave o DOI (máximo 1024 caracteres).")
+_CACHE_OA: dict[str, tuple[float, dict]] = {}
+_CREDITOS: dict[str, str] = {}
+
+
+def _openalex_params(params: dict) -> dict:
     cfg = load_settings()["literatura"]
+    if cfg.get("openalex_correo"):
+        params["mailto"] = cfg["openalex_correo"]
+    if cfg.get("openalex_clave"):
+        params["api_key"] = cfg["openalex_clave"]
+    return params
+
+
+def _filtro_texto(v: str) -> str:
+    # En los filtros de OpenAlex la coma separa filtros y la barra separa alternativas
+    return " ".join(v.replace(",", " ").replace("|", " ").replace(":", " ").split())[:300]
+
+
+def buscar(q: str = "", pagina: int = 1, solo_abierto: bool = False, desde: int | None = None, hasta: int | None = None,
+           orden: str = "relevancia", modo: str = "todo", titulo: str = "", autor: str = "", autor_id: str = "") -> dict:
+    """modo: todo | titulo | autor | doi. `titulo` y `autor` se combinan (Y). `autor_id` = obras de un autor exacto."""
+    q, titulo, autor = (q or "").strip(), (titulo or "").strip(), (autor or "").strip()
+    autor_id = (autor_id or "").strip().rsplit("/", 1)[-1]
+    if modo == "titulo" and q and not titulo:
+        titulo, q = q, ""
+    elif modo == "autor" and q and not autor:
+        autor, q = q, ""
+    if not (q or titulo or autor or autor_id):
+        raise LitError("Escribe un título, un autor, palabras clave o un DOI.")
+    if len(q) > 1024:
+        raise LitError("La consulta es demasiado larga (máximo 1024 caracteres).")
     params = {
         "per_page": 25, "page": max(1, min(int(pagina), 400)),
         "select": "id,doi,display_name,publication_year,authorships,primary_location,best_oa_location,locations,"
                   "open_access,cited_by_count,type",
     }
     filtros = []
-    doi = normalizar_doi(q)
+    doi = normalizar_doi(q) if q else None
     if doi:
         filtros.append("doi:https://doi.org/" + doi)
-    else:
+    elif q:
         params["search"] = q
+    if titulo:
+        filtros.append("title.search:" + _filtro_texto(titulo))
+    if autor_id:
+        if not re.fullmatch(r"A\d{4,12}", autor_id):
+            raise LitError("Identificador de autor no válido.")
+        filtros.append("authorships.author.id:" + autor_id)
+    elif autor:
+        filtros.append("raw_author_name.search:" + _filtro_texto(autor))
     if solo_abierto:
         filtros.append("is_oa:true")
     if desde:
@@ -205,21 +246,30 @@ def buscar(q: str, pagina: int = 1, solo_abierto: bool = False, desde: int | Non
         params["filter"] = ",".join(filtros)
     if orden == "citas":
         params["sort"] = "cited_by_count:desc"
-    elif orden == "recientes":
-        params["sort"] = "publication_date:desc"
-    if cfg.get("openalex_correo"):
-        params["mailto"] = cfg["openalex_correo"]
-    if cfg.get("openalex_clave"):
-        params["api_key"] = cfg["openalex_clave"]
-    try:
-        r = sesion().get(OPENALEX, params=params, timeout=30)
-    except requests.RequestException as e:
-        raise LitError("No se pudo conectar con OpenAlex: " + str(e)[:160]) from None
-    if r.status_code == 429:
-        raise LitError("OpenAlex limitó las peticiones. Espera un momento o añade tu correo/clave en Ajustes.")
-    if r.status_code != 200:
-        raise LitError(f"OpenAlex respondió HTTP {r.status_code}.")
-    data = r.json()
+    elif orden == "recientes" or (autor_id and orden == "relevancia" and not q):
+        params["sort"] = "publication_date:desc"  # obras de un autor: lo más reciente primero
+    clave_cache = repr(sorted(params.items()))
+    hit = _CACHE_OA.get(clave_cache)
+    if hit and time.time() - hit[0] < 600:
+        data = hit[1]
+    else:
+        try:
+            r = sesion().get(OPENALEX, params=_openalex_params(params), timeout=30)
+        except requests.RequestException as e:
+            raise LitError("No se pudo conectar con OpenAlex: " + str(e)[:160]) from None
+        _CREDITOS.update({k: r.headers.get(h) for k, h in (("restantes", "X-RateLimit-Remaining"), ("limite", "X-RateLimit-Limit"),
+                                                            ("reinicio_s", "X-RateLimit-Reset")) if r.headers.get(h)})
+        if r.status_code == 429:
+            sin_clave = not load_settings()["literatura"].get("openalex_clave")
+            raise LitError("OpenAlex limitó las peticiones" + (
+                " (sin clave hay ~100 búsquedas al día). Crea una clave gratuita en openalex.org/settings/api y pégala en "
+                "Ajustes → Literatura." if sin_clave else ". Espera un momento y vuelve a intentarlo."))
+        if r.status_code != 200:
+            raise LitError(f"OpenAlex respondió HTTP {r.status_code}.")
+        data = r.json()
+        _CACHE_OA[clave_cache] = (time.time(), data)
+        if len(_CACHE_OA) > 200:
+            _CACHE_OA.pop(next(iter(_CACHE_OA)))
     obras, vistos = [], set()
     for raw in data.get("results", []):
         o = _obra(raw)
@@ -227,7 +277,47 @@ def buscar(q: str, pagina: int = 1, solo_abierto: bool = False, desde: int | Non
             vistos.add(o["doi"] or o["id"])
             obras.append(o)
     total = (data.get("meta") or {}).get("count") or 0
-    return {"obras": obras, "total": total, "pagina": params["page"], "hay_mas": params["page"] * 25 < total}
+    return {"obras": obras, "total": total, "pagina": params["page"], "hay_mas": params["page"] * 25 < total,
+            "creditos": dict(_CREDITOS)}
+
+
+def autor(aid: str) -> dict:
+    """Ficha de un autor de OpenAlex (para la cabecera de «obras de…»)."""
+    aid = (aid or "").strip().rsplit("/", 1)[-1]
+    if not re.fullmatch(r"A\d{4,12}", aid):
+        raise LitError("Identificador de autor no válido.")
+    try:
+        r = sesion().get(f"https://api.openalex.org/authors/{aid}", params=_openalex_params({}), timeout=20)
+    except requests.RequestException as e:
+        raise LitError("No se pudo consultar el autor: " + str(e)[:120]) from None
+    if r.status_code != 200:
+        raise LitError(f"OpenAlex respondió HTTP {r.status_code} al pedir el autor.")
+    a = r.json()
+    inst = [(x.get("display_name") or "") for x in (a.get("last_known_institutions") or [])][:3]
+    temas = [(x.get("display_name") or "") for x in (a.get("topics") or [])][:5]
+    return {
+        "id": aid, "nombre": a.get("display_name"), "orcid": a.get("orcid"), "obras": a.get("works_count"),
+        "citas": a.get("cited_by_count"), "h": (a.get("summary_stats") or {}).get("h_index"),
+        "instituciones": [i for i in inst if i], "temas": [t for t in temas if t],
+    }
+
+
+def buscar_autores(nombre: str) -> list[dict]:
+    """Sugerencias de autores con ese nombre (para desambiguar homónimos)."""
+    nombre = (nombre or "").strip()
+    if len(nombre) < 3:
+        return []
+    try:
+        r = sesion().get("https://api.openalex.org/authors", params=_openalex_params({"search": nombre, "per_page": 8}), timeout=20)
+        r.raise_for_status()
+    except requests.RequestException:
+        return []
+    out = []
+    for a in r.json().get("results", []):
+        inst = [(x.get("display_name") or "") for x in (a.get("last_known_institutions") or [])][:1]
+        out.append({"id": (a.get("id") or "").rsplit("/", 1)[-1], "nombre": a.get("display_name"),
+                    "obras": a.get("works_count"), "citas": a.get("cited_by_count"), "institucion": inst[0] if inst else ""})
+    return out
 
 
 def metadatos_doi(doi: str) -> dict | None:
@@ -384,7 +474,127 @@ def _procesar_cola(ids: list[str]) -> None:
         db.conn().commit()
 
 
+def encolar_libro(libro: dict, fuente: str = "libgen") -> dict:
+    """Descarga de un resultado de LibGen (libgen-api-enhanced) o de Anna's Archive."""
+    if not isinstance(libro, dict) or not re.fullmatch(r"[0-9a-fA-F]{32}", str(libro.get("md5", ""))):
+        raise LitError("Resultado no válido (falta md5).")
+    t = _nuevo_trabajo(libro.get("titulo") or libro["md5"], libro, "annas" if fuente == "annas" else "libgen")
+    t["tipo"] = "libro"
+    threading.Thread(target=_procesar_cola, args=([t["id"]],), daemon=True).start()
+    return publico(t)
+
+
+def _procesar_libro(t: dict) -> None:
+    from . import libgen
+    libro = t["obra"]
+    ya = db.row("SELECT id FROM documentos WHERE origen IN ('libgen','annas') AND titulo=? AND papelera IS NULL", (libro.get("titulo"),))
+    if ya:
+        t["estado"], t["documento_id"] = "duplicado", ya["id"]
+        _log(t, "Ya está en tu biblioteca.", "ok")
+        return
+    t["estado"] = "buscando"
+    origen = "Anna's Archive" if t["fuente"] == "annas" else "LibGen"
+    _log(t, f"{origen} · {(libro.get('extension') or '?').upper()} · {libro.get('tamano', '?')} · md5 {libro.get('md5')}")
+    from . import tunel
+    modo = load_settings()["literatura"].get("tunel", "directo")
+    if modo == "tor":
+        _log(t, "Conectando por Tor…")
+        try:
+            tunel.esperar_listo()
+        except RuntimeError as e:
+            raise LitError(str(e)) from None
+        _log(t, "Túnel Tor listo.", "ok")
+    if t["fuente"] == "annas":
+        from . import annas
+        try:
+            url, via = annas.enlace_descarga(libro)
+        except annas.AnnasError as e:
+            t["pagina_url"] = libro.get("pagina_url")
+            raise LitError(str(e)) from None
+        _log(t, f"Descarga vía {via}")
+    else:
+        try:
+            url = libgen.resolver_enlace(libro)
+        except libgen.LibgenError as e:
+            t["pagina_url"] = (libro.get("espejos") or [None])[0]
+            raise LitError(str(e)) from None
+    _log(t, f"Enlace directo en {libgen.dominio(url)}")
+    url_publica(url)
+    t["estado"] = "descargando"
+    destino = libgen.destino_temporal(libro)
+    # El CDN de LibGen a veces responde 503 o no contesta: reintentos con espera y otro dominio de LibGen
+    alternos = [d for d in ("bz", "la", "vg", "gl", "li") if d != (load_settings()["literatura"].get("libgen_espejo") or "li")]
+    r = None
+    for intento, espera in enumerate((0, 6, 20)):
+        if espera:
+            dom = alternos[(intento - 1) % len(alternos)]
+            _log(t, f"El servidor de descarga falló; reintento en {espera} s vía libgen.{dom}…", "aviso")
+            time.sleep(espera)
+            try:
+                url = libgen.resolver_enlace({**libro, "espejos": [f"https://libgen.{dom}/ads.php?md5={libro['md5']}"]})
+            except libgen.LibgenError:
+                pass
+        try:
+            r = sesion().get(url, timeout=(20, max(_timeout(), 90)), stream=True, verify=False)
+        except requests.RequestException as e:
+            r = None
+            ultimo = "sin respuesta del servidor (" + type(e).__name__ + ")"
+            continue
+        if r.status_code == 200:
+            break
+        ultimo = f"HTTP {r.status_code}"
+        r.close()
+        r = None
+    if r is None:
+        t["pagina_url"] = (libro.get("espejos") or [libro.get("pagina_url")])[0]
+        raise LitError(f"El servidor de descarga no entregó el archivo ({ultimo}). Suele ser temporal: reintenta más tarde "
+                       "o activa el túnel Tor en Ajustes → Literatura.")
+    total, ultimo_aviso = 0, 0
+    with open(destino, "wb") as f:
+        for bloque in r.iter_content(256 * 1024):
+            if not bloque:
+                continue
+            total += len(bloque)
+            if total > libgen.MAX_LIBRO:
+                f.close()
+                destino.unlink(missing_ok=True)
+                raise LitError("El archivo supera el tamaño máximo (400 MB).")
+            if total - ultimo_aviso > 10 * 1024 * 1024:
+                ultimo_aviso = total
+                _log(t, f"Descargados {total // (1024 * 1024)} MB…")
+            f.write(bloque)
+    if "html" in r.headers.get("Content-Type", "").lower() and total < 200_000:
+        destino.unlink(missing_ok=True)
+        t["pagina_url"] = (libro.get("espejos") or [None])[0]
+        raise LitError("El espejo devolvió una página web en vez del archivo. Ábrelo en el navegador.")
+    _log(t, f"Descarga completa ({total / (1024 * 1024):.1f} MB).")
+    ext = destino.suffix.lower()
+    final = libgen.LIBROS_DIR / libgen.nombre_archivo(libro)
+    if final.exists():
+        final = final.with_stem(final.stem + "-" + libro["md5"][:6])
+    destino.replace(final)
+    t["archivo"] = str(final)
+    anio = int(libro["anio"]) if str(libro.get("anio", "")).isdigit() else None
+    if ext == ".pdf" or ext in library.EBOOKS:
+        if ext != ".pdf":
+            _log(t, f"Convirtiendo {ext.upper().lstrip('.')} a PDF…")
+        try:
+            d = library.import_pdf(final, title=libro.get("titulo"), authors=libro.get("autor", ""), year=anio, origen=t["fuente"])
+        except library.LibraryError as e:
+            t["estado"] = "ok"
+            _log(t, f"Guardado en {final}, pero no se pudo importar: {e}", "aviso")
+            return
+        t["documento_id"] = d["id"]
+        t["estado"] = "duplicado" if d.get("duplicado") else "ok"
+        _log(t, f"Importado a la biblioteca: «{d['titulo'][:90]}» ({d['paginas']} págs.)", "ok")
+    else:
+        t["estado"] = "ok"
+        _log(t, f"Formato {ext.upper().lstrip('.')} guardado en tu carpeta de libros (se abre con el programa de Windows).", "ok")
+
+
 def _procesar(t: dict) -> None:
+    if t["fuente"] in ("libgen", "annas"):
+        return _procesar_libro(t)
     cfg = load_settings()["literatura"]
     q = t["consulta"]
     doi = normalizar_doi(q)

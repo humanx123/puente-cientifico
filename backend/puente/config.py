@@ -88,6 +88,15 @@ DEFAULT_SETTINGS = {
         "openalex_correo": "",
         "openalex_clave": "",
         "guardar_copia_en": "",  # carpeta extra donde dejar el PDF además de la biblioteca
+        "libgen_espejo": "li",  # dominio de LibGen: li, bz, gs, la, vg…
+        "annas_dominios": ["annas-archive.gl", "annas-archive.pk", "annas-archive.gd", "annas-archive.se", "annas-archive.org"],
+        "annas_clave": "",  # clave de miembro (descarga rápida); opcional
+        "annas_doh": True,  # resolver con DNS sobre HTTPS si el DNS del sistema no resuelve
+        "tunel": "directo",  # directo | tor | proxy
+        "tor_puerto": 9077,
+        "tor_puentes": "ninguno",  # ninguno | snowflake | obfs4 | propios
+        "tor_puentes_propios": "",
+        "tor_salida": "",  # países de salida, p. ej. "de,nl"
     },
     "noticias": {
         "intervalo_horas": 3,
@@ -95,6 +104,7 @@ DEFAULT_SETTINGS = {
     },
     "apariencia": {
         "tema": "claro",  # claro | oscuro
+        "skin": "brutalista",  # brutalista | minimalista
         "acento": "#ff3d00",
         "zoom": 1.0,
     },
@@ -102,7 +112,7 @@ DEFAULT_SETTINGS = {
 
 _lock = threading.Lock()
 SECRETOS = (("traduccion", "openai_clave"), ("traduccion", "freellmapi_clave"),
-            ("literatura", "openalex_clave"), ("literatura", "proxy_clave"))
+            ("literatura", "openalex_clave"), ("literatura", "proxy_clave"), ("literatura", "annas_clave"))
 
 
 def _merge(base: dict, extra: dict) -> dict:

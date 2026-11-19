@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Plus, Copy, Trash2, Save, Upload, Download, Wand2, BookA, Loader2 } from 'lucide-react'
 import { api, IDIOMAS_UI } from '../api.js'
-import { Cabecera, Campo, Modal, useAviso, Vacio } from '../ui.jsx'
+import { Cabecera, Campo, Modal, PanelLateral, Vacio, useAviso, usePref } from '../ui.jsx'
 
 export default function Glosarios() {
   const avisar = useAviso()
@@ -46,7 +46,7 @@ export default function Glosarios() {
         </div>
       </Cabecera>
       <div className="glos" style={{ flex: 1, minHeight: 0 }}>
-        <aside className="filtros">
+        <PanelLateral clave="glosarios" ancho={300} min={150} max={520} titulo="Glosarios"><div className="filtros">
           <h4>{lista.length} glosarios</h4>
           {lista.map((g) => (
             <button key={g.id} className={`filtro ${actual?.id === g.id ? 'activo' : ''}`} onClick={() => elegir(g)}>
@@ -54,7 +54,7 @@ export default function Glosarios() {
               <span className="n">{g.origen}→{g.destino} · {g.n}</span>
             </button>
           ))}
-        </aside>
+        </div></PanelLateral>
         <div className="cuerpo cuerpo-pad">
           {!actual ? <Vacio titulo="Sin glosarios"><button className="btn primario" onClick={nuevo}><Plus size={15} />Crear uno</button></Vacio> : (
             <div className="col">

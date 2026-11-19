@@ -113,6 +113,53 @@ export function usePeriodico(fn, ms, deps = []) {
   }, deps)
 }
 
+// ---------- Preferencias de diseño guardadas en este equipo ----------
+export function usePref(clave, inicial) {
+  const [v, setV] = useState(() => {
+    try { const x = localStorage.getItem('pc.' + clave); return x === null ? inicial : JSON.parse(x) } catch { return inicial }
+  })
+  useEffect(() => { try { localStorage.setItem('pc.' + clave, JSON.stringify(v)) } catch { /* sin almacenamiento */ } }, [clave, v])
+  return [v, setV]
+}
+
+// ---------- Panel lateral redimensionable y plegable ----------
+// Arrastra el borde para cambiar el ancho; doble clic (o el botón) lo oculta/muestra.
+export function PanelLateral({ clave, ancho = 260, min = 160, max = 640, lado = 'izq', className = '', titulo = '', children }) {
+  const [w, setW] = usePref(`panel.${clave}`, ancho)
+  const [oculto, setOculto] = usePref(`panel.${clave}.oculto`, false)
+  const arrastre = useRef(null)
+  const empezar = (e) => {
+    e.preventDefault()
+    arrastre.current = { x: e.clientX, w }
+    document.body.classList.add('redimensionando')
+    const mover = (ev) => {
+      const d = ev.clientX - arrastre.current.x
+      setW(Math.max(min, Math.min(max, arrastre.current.w + (lado === 'izq' ? d : -d))))
+    }
+    const soltar = () => {
+      document.body.classList.remove('redimensionando')
+      window.removeEventListener('mousemove', mover)
+      window.removeEventListener('mouseup', soltar)
+    }
+    window.addEventListener('mousemove', mover)
+    window.addEventListener('mouseup', soltar)
+  }
+  if (oculto) {
+    return (
+      <button className={`panel-pestana ${lado}`} title={`Mostrar ${titulo || 'panel'}`} onClick={() => setOculto(false)}>
+        <span>{titulo || '•••'}</span>
+      </button>
+    )
+  }
+  return (
+    <aside className={`panel-lateral ${lado} ${className}`} style={{ width: w }}>
+      {children}
+      <div className={`divisor ${lado}`} onMouseDown={empezar} onDoubleClick={() => setOculto(true)}
+        title="Arrastra para cambiar el ancho · doble clic para ocultar" />
+    </aside>
+  )
+}
+
 export function Progreso({ valor }) {
   return <div className="progreso"><div style={{ width: `${Math.max(0, Math.min(100, valor))}%` }} /></div>
 }

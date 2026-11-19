@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Library, BookOpen, Search, Newspaper, BookA, Settings, Moon, Sun } from 'lucide-react'
+import { Library, BookOpen, Search, Newspaper, BookA, Settings, Moon, Sun, PanelLeftClose, PanelLeftOpen, Square, SquareDashed } from 'lucide-react'
 import { api } from './api.js'
-import { usePeriodico } from './ui.jsx'
+import { usePeriodico, usePref } from './ui.jsx'
 import Biblioteca from './vistas/Biblioteca.jsx'
 import Lector from './vistas/Lector.jsx'
 import Literatura from './vistas/Literatura.jsx'
@@ -32,7 +32,17 @@ export default function App() {
   const recargarAjustes = useCallback(() => api.get('/api/ajustes').then(setAjustes).catch(() => {}), [])
   useEffect(() => { recargarAjustes(); api.get('/api/estado').then(setEstado).catch(() => {}) }, [recargarAjustes, version])
 
+  const [plegada, setPlegada] = usePref('nav.plegada', false)
+  useEffect(() => {
+    const k = (e) => { if (e.ctrlKey && e.key.toLowerCase() === 'b') { e.preventDefault(); setPlegada((p) => !p) } }
+    window.addEventListener('keydown', k)
+    return () => window.removeEventListener('keydown', k)
+  }, [setPlegada])
+
   const tema = ajustes?.apariencia?.tema || 'claro'
+  const skin = ajustes?.apariencia?.skin || 'brutalista'
+  useEffect(() => { document.documentElement.dataset.skin = skin }, [skin])
+  const cambiarSkin = async () => setAjustes(await api.put('/api/ajustes', { apariencia: { skin: skin === 'minimalista' ? 'brutalista' : 'minimalista' } }))
   useEffect(() => {
     document.documentElement.dataset.tema = tema
     if (ajustes?.apariencia?.acento) document.documentElement.style.setProperty('--senal', ajustes.apariencia.acento)
@@ -63,13 +73,15 @@ export default function App() {
   const captchas = trabajosL.filter((t) => t.estado === 'captcha').length
 
   return (
-    <div className="app">
+    <div className={`app ${plegada ? 'nav-plegada' : ''}`}>
       <nav className="nav">
         <div className="marca">
           <div className="marca-logo">
             <div className="marca-cuadro">P</div>
             <h1>Puente<br />Científico</h1>
+            {!plegada && <button className="btn-plegar" title="Ocultar menú (Ctrl+B)" onClick={() => setPlegada(true)}><PanelLeftClose size={17} /></button>}
           </div>
+          {plegada && <button className="btn-plegar" style={{ margin: '10px auto 0', display: 'block' }} title="Mostrar menú (Ctrl+B)" onClick={() => setPlegada(false)}><PanelLeftOpen size={17} /></button>}
           <small>LEER · TRADUCIR · ENCONTRAR</small>
         </div>
         <div className="nav-lista">
@@ -78,17 +90,19 @@ export default function App() {
             const extra = v.id === 'literatura' && lActivos.length ? <span className={`chip ${captchas ? 'acido' : 'senal'} contador`}>{captchas ? 'CAPTCHA' : lActivos.length}</span>
               : v.id === 'lector' && tActivos.length ? <span className="chip senal contador">{tActivos.length}</span> : null
             return (
-              <button key={v.id} className={`nav-item ${vista === v.id ? 'activo' : ''}`} onClick={() => setVista(v.id)}>
+              <button key={v.id} className={`nav-item ${vista === v.id ? 'activo' : ''}`} onClick={() => setVista(v.id)} title={v.texto}>
                 <span className="num">{String(i + 1).padStart(2, '0')}</span>
-                <I size={17} strokeWidth={2.4} />
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>{v.texto}{extra}</span>
+                <I size={17} strokeWidth={skin === 'minimalista' ? 1.9 : 2.4} />
+                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><span className="txt">{v.texto}</span>{extra}</span>
               </button>
             )
           })}
         </div>
         <div className="nav-pie">
-          <button className="btn chico" onClick={cambiarTema}>{tema === 'oscuro' ? <Sun size={14} /> : <Moon size={14} />}{tema === 'oscuro' ? 'Modo claro' : 'Modo oscuro'}</button>
-          <span className="tenue">v{estado?.version || '—'} · {estado?.estadisticas?.documentos ?? 0} DOCS</span>
+          <button className="btn chico" onClick={cambiarSkin} title="Cambiar entre skin brutalista y minimalista">
+            {skin === 'minimalista' ? <Square size={14} /> : <SquareDashed size={14} />}<span className="solo-ancho">{skin === 'minimalista' ? 'Brutalista' : 'Minimalista'}</span></button>
+          <button className="btn chico" onClick={cambiarTema} title="Tema claro u oscuro">{tema === 'oscuro' ? <Sun size={14} /> : <Moon size={14} />}<span className="solo-ancho">{tema === 'oscuro' ? 'Modo claro' : 'Modo oscuro'}</span></button>
+          <span className="tenue solo-ancho">v{estado?.version || '—'} · {estado?.estadisticas?.documentos ?? 0} DOCS</span>
         </div>
       </nav>
 

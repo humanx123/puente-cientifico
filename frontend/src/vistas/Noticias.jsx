@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { RefreshCw, Search, Bookmark, BookmarkCheck, Eye, EyeOff, ExternalLink, Rss, Plus, Trash2, FlaskConical, Loader2 } from 'lucide-react'
 import { api, abrirUrl, qs } from '../api.js'
-import { Cabecera, Campo, Casilla, Modal, useAviso, Vacio } from '../ui.jsx'
+import { Cabecera, Campo, Casilla, Modal, PanelLateral, Vacio, useAviso, usePref } from '../ui.jsx'
 
 export default function Noticias({ estado }) {
   const avisar = useAviso()
@@ -11,6 +11,7 @@ export default function Noticias({ estado }) {
   const [fuentes, setFuentes] = useState([])
   const [gestor, setGestor] = useState(false)
   const [actualizando, setActualizando] = useState(false)
+  const [colAncho, setColAncho] = usePref('noticias.columna', 320)
 
   const cargar = useCallback(async () => {
     try { setItems(await api.get('/api/noticias' + qs(filtro))) } catch (e) { avisar(e.message, 'error') }
@@ -49,7 +50,7 @@ export default function Noticias({ estado }) {
       </Cabecera>
       {titular && <div className="marquesina"><div>{titular}</div></div>}
       <div className="noticias" style={{ flex: 1, minHeight: 0 }}>
-        <aside className="filtros" style={{ padding: '6px 0' }}>
+        <PanelLateral clave="noticias" ancho={250} min={150} max={520} titulo="Filtros"><div className="filtros" style={{ padding: '6px 0' }}>
           <div className="faceta">
             <div className="busqueda" style={{ marginTop: 10 }}><Search size={15} /><input className="entrada" placeholder="Buscar" value={filtro.q} onChange={(e) => setFiltro({ ...filtro, q: e.target.value })} /></div>
             <div className="col" style={{ marginTop: 12, gap: 8 }}>
@@ -70,16 +71,20 @@ export default function Noticias({ estado }) {
               {fuentes.map((f) => <option key={f.id} value={f.id}>{f.nombre} ({f.n})</option>)}
             </select>
           </div>
-        </aside>
+        </div></PanelLateral>
         <div className="cuerpo cuerpo-pad">
-          <div className="mono" style={{ fontSize: 12, marginBottom: 14 }}>{items.length} ELEMENTOS</div>
+          <div className="fila" style={{ marginBottom: 14 }}>
+            <span className="mono" style={{ fontSize: 12 }}>{items.length} ELEMENTOS</span>
+            <span className="espaciador" />
+            <label className="deslizador" title="Ancho de las columnas">Columnas<input type="range" min="240" max="620" step="20" value={colAncho} onChange={(e) => setColAncho(Number(e.target.value))} /></label>
+          </div>
           {items.length === 0 ? (
             <Vacio titulo={estado?.en_curso ? 'Recolectando…' : 'Sin noticias con estos filtros'}>
               <p style={{ margin: 0 }}>La app recoge noticias, convocatorias, becas y olimpiadas de ciencia en español al iniciar y cada pocas horas.</p>
               <button className="btn primario" onClick={actualizar}><RefreshCw size={15} />Actualizar ahora</button>
             </Vacio>
           ) : (
-            <div className="columna-noticias">
+            <div className="columna-noticias" style={{ '--col-noticia': colAncho + 'px' }}>
               {items.map((n) => (
                 <article key={n.uid} className={`noticia ${n.leida ? 'leida' : ''}`}>
                   <div className="org"><b>{n.organizacion}</b><span className="tenue">{n.fecha ? new Date(n.fecha + 'T12:00:00').toLocaleDateString('es-MX', { day: '2-digit', month: 'short', year: 'numeric' }) : ''}</span></div>

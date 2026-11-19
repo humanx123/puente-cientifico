@@ -4,7 +4,7 @@ import {
   Highlighter, Underline, Copy, BookA, Bookmark, Trash2, ChevronLeft, ChevronRight, Square, Maximize2, Library,
 } from 'lucide-react'
 import { api, qs, IDIOMAS_UI } from '../api.js'
-import { Cabecera, Progreso, useAviso, Vacio } from '../ui.jsx'
+import { Cabecera, PanelLateral, Progreso, useAviso, Vacio } from '../ui.jsx'
 import Pagina from './Pagina.jsx'
 import Asistente from './Asistente.jsx'
 import { ModalTraducir, ModalExportar, ModalTermino, PanelSegmento } from './LectorModales.jsx'
@@ -272,8 +272,8 @@ export default function Lector({ doc, abrirDoc, irA, ajustes, trabajos, refresca
         </div>
       )}
 
-      <div className={`lector ${lateralAbierto ? '' : 'sin-lateral'}`} style={{ flex: 1, minHeight: 0 }}>
-        <aside className="lateral" style={lateralAbierto ? null : { display: 'none' }}>
+      <div className="lector" style={{ flex: 1, minHeight: 0 }}>
+        {lateralAbierto && <PanelLateral clave="lector" ancho={250} min={170} max={520} titulo="Páginas"><aside className="lateral">
           <div className="pestanas">
             {[['miniaturas', ImgIcon], ['indice', ListTree], ['buscar', Search], ['notas', StickyNote]].map(([k, I]) => (
               <button key={k} className={`pestana ${lateral === k ? 'activo' : ''}`} onClick={() => setLateral(k)} title={k}><I size={16} /></button>
@@ -326,9 +326,9 @@ export default function Lector({ doc, abrirDoc, irA, ajustes, trabajos, refresca
               </div>
             )}
           </div>
-        </aside>
+        </aside></PanelLateral>}
 
-        <div className="visor" ref={visorRef} onMouseUp={alSoltar} onScroll={() => sel && setSel(null)}>
+        <div className="visor" style={{ flex: 1 }} ref={visorRef} onMouseUp={alSoltar} onScroll={() => sel && setSel(null)}>
           <div className="paginas">
             {paginas.map((p) => {
               const ancho = anchoBase(p)
@@ -352,8 +352,10 @@ export default function Lector({ doc, abrirDoc, irA, ajustes, trabajos, refresca
         </div>
 
         {asistente && (
-          <Asistente docId={id} pagina={pag} irAPagina={irAPagina} seleccion={seleccionAsistente} limpiarSeleccion={() => setSeleccionAsistente(null)}
-            onNota={(n) => setNotas((x) => [...x, n])} onCerrar={() => setAsistente(false)} />
+          <PanelLateral clave="asistente" lado="der" ancho={380} min={280} max={760} titulo="Asistente">
+            <Asistente docId={id} pagina={pag} irAPagina={irAPagina} seleccion={seleccionAsistente} limpiarSeleccion={() => setSeleccionAsistente(null)}
+              onNota={(n) => setNotas((x) => [...x, n])} onCerrar={() => setAsistente(false)} />
+          </PanelLateral>
         )}
       </div>
 

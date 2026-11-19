@@ -56,7 +56,24 @@ if (-not (Test-Path "$Runtime\python.exe")) {
 Paso "3/5 Dependencias en el runtime (aisladas del Python del sistema)"
 Ejecutar "$Runtime\python.exe" @("-s", "-m", "pip", "install", "--no-warn-script-location", "--disable-pip-version-check", "-r", "$Raiz\backend\requirements.txt")
 # Verificación con -s: si algo solo existiera en el user-site del desarrollador, aquí falla
-Ejecutar "$Runtime\python.exe" @("-s", "-c", "import fastapi, uvicorn, multipart, webview, clr_loader, fitz, requests, socks, lxml, feedparser, bs4, pathvalidate; print('dependencias OK')")
+Ejecutar "$Runtime\python.exe" @("-s", "-c", "import fastapi, uvicorn, multipart, webview, clr_loader, fitz, requests, socks, lxml, feedparser, bs4, pathvalidate, libgen_api_enhanced; print('dependencias OK')")
+
+Paso "3b/5 Tor Expert Bundle (túnel de privacidad, código abierto)"
+$TorVer = "16.0.1"
+$torTgz = Join-Path $Cache "tor-expert-bundle-windows-x86_64-$TorVer.tar.gz"
+if (-not (Test-Path $torTgz)) {
+    curl.exe -L --fail -o $torTgz "https://dist.torproject.org/torbrowser/$TorVer/tor-expert-bundle-windows-x86_64-$TorVer.tar.gz"
+    if ($LASTEXITCODE) { throw "No se pudo descargar Tor" }
+}
+$TorStage = Join-Path $Stage "tor"
+if (Test-Path $TorStage) { Remove-Item -Recurse -Force $TorStage }
+New-Item -ItemType Directory -Force $TorStage | Out-Null
+tar -xzf $torTgz -C $TorStage
+if ($LASTEXITCODE) { throw "No se pudo extraer Tor" }
+# Solo lo necesario: tor.exe, GeoIP y lyrebird (puentes obfs4/Snowflake); se omiten conjure y tor-gencert
+Remove-Item -Force "$TorStage\tor\tor-gencert.exe", "$TorStage\tor\pluggable_transports\conjure-client.exe", "$TorStage\tor\pluggable_transports\README.CONJURE.md" -ErrorAction SilentlyContinue
+if (-not (Test-Path "$TorStage\tor\tor.exe")) { throw "Falta tor.exe en el bundle" }
+Write-Host "Tor $TorVer listo en el paquete"
 
 # ---------------------------------------------------------------------------
 Paso "4/5 Código de la app"

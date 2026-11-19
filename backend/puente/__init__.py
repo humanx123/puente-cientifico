@@ -6,6 +6,6 @@ Integra ideas y lógica de:
 - SciHubEVA (leovan): cliente de Sci-Hub con XPath, CAPTCHA, espejos y rangos.
 - science-hub (goldruma): agregador de avisos y noticias con etiquetas por palabras clave.
 """
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 APP_NAME = "Puente Científico"
 APP_ID = "PuenteCientifico"

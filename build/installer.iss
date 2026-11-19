@@ -47,11 +47,13 @@ Type: filesandordirs; Name: "{app}\app\static"
 ; Cachés .pyc que Python genera al ejecutarse (los datos del usuario en %APPDATA% se conservan)
 Type: filesandordirs; Name: "{app}\runtime"
 Type: filesandordirs; Name: "{app}\app"
+Type: filesandordirs; Name: "{app}\tor"
 Type: dirifempty; Name: "{app}"
 
 [Files]
 Source: "{#StageDir}\runtime\*"; DestDir: "{app}\runtime"; Flags: recursesubdirs createallsubdirs ignoreversion
 Source: "{#StageDir}\app\*"; DestDir: "{app}\app"; Flags: recursesubdirs createallsubdirs ignoreversion
+Source: "{#StageDir}\tor\*"; DestDir: "{app}\tor"; Flags: recursesubdirs createallsubdirs ignoreversion
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\runtime\pythonw.exe"; Parameters: """{app}\app\run.py"""; WorkingDir: "{app}\app"; IconFilename: "{app}\app\assets\puente.ico"; Comment: "Leer, traducir y encontrar literatura científica"; AppUserModelID: "PuenteCientifico.App"

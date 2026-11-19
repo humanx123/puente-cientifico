@@ -4,7 +4,7 @@ import {
   BookOpen, Pencil, FolderOpen, RotateCcw, X, Sparkles, Folder,
 } from 'lucide-react'
 import { api, dialogoNativo, qs } from '../api.js'
-import { Cabecera, Campo, MenuFlotante, Modal, useAviso, Vacio } from '../ui.jsx'
+import { Cabecera, Campo, MenuFlotante, Modal, PanelLateral, useAviso, usePref, Vacio } from '../ui.jsx'
 
 const VISTAS = [
   { id: 'todos', texto: 'Todos', icono: Layers },
@@ -30,6 +30,8 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
   const [menu, setMenu] = useState(null)
   const [editar, setEditar] = useState(null)
   const [importando, setImportando] = useState(false)
+  const [tamTarjeta, setTamTarjeta] = usePref('biblio.tarjeta', 196)
+  const [verMetricas, setVerMetricas] = usePref('biblio.metricas', true)
   const inputRef = useRef(null)
 
   const cargar = useCallback(async () => {
@@ -58,8 +60,8 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
   }
 
   const subirArchivos = async (files) => {
-    const pdfs = [...files].filter((f) => f.name.toLowerCase().endsWith('.pdf'))
-    if (!pdfs.length) return avisar('Solo se pueden importar archivos PDF.', 'error')
+    const pdfs = [...files].filter((f) => /\.(pdf|epub|mobi|fb2|cbz|xps)$/i.test(f.name))
+    if (!pdfs.length) return avisar('Formatos admitidos: PDF, EPUB, MOBI, FB2, CBZ y XPS.', 'error')
     const fd = new FormData()
     pdfs.forEach((f) => fd.append('archivos', f))
     setImportando(true)
@@ -120,7 +122,7 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
       onDragOver={(e) => { e.preventDefault(); setArrastrando(true) }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setArrastrando(false) }}
       onDrop={(e) => { e.preventDefault(); setArrastrando(false); subirArchivos(e.dataTransfer.files) }}>
-      <aside className="filtros">
+      <PanelLateral clave="biblio" ancho={220} min={150} max={420} titulo="Filtros"><div className="filtros">
         <h4>Vistas</h4>
         {VISTAS.map((v) => {
           const I = v.icono
@@ -145,20 +147,20 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
         {vista === 'papelera' && docs.length > 0 && (
           <div style={{ padding: 16 }}><button className="btn peligro chico" onClick={() => confirm('¿Vaciar la papelera definitivamente?') && accion(() => api.post('/api/papelera/vaciar'), 'Papelera vaciada.')}><Trash2 size={14} />Vaciar papelera</button></div>
         )}
-      </aside>
+      </div></PanelLateral>
 
-      <section style={{ display: 'flex', flexDirection: 'column', minHeight: 0, position: 'relative' }}>
+      <section className="zona-central">
         <Cabecera eti={`// biblioteca · ${docs.length} documentos`} titulo={titulo}>
           <div className="fila">
             <button className="btn primario" onClick={() => importar('abrir')} disabled={importando}><FilePlus2 size={16} />{importando ? 'Importando…' : 'Importar PDF'}</button>
             <button className="btn" onClick={() => importar('carpeta')} disabled={importando}><FolderInput size={16} />Carpeta</button>
             <button className="btn negro" onClick={() => irA('literatura')}><Search size={16} />Buscar literatura</button>
           </div>
-          <input ref={inputRef} type="file" accept=".pdf" multiple hidden onChange={(e) => { subirArchivos(e.target.files); e.target.value = '' }} />
+          <input ref={inputRef} type="file" accept=".pdf,.epub,.mobi,.fb2,.cbz,.xps" multiple hidden onChange={(e) => { subirArchivos(e.target.files); e.target.value = '' }} />
         </Cabecera>
 
         <div className="cuerpo cuerpo-pad">
-          {stats && (
+          {stats && verMetricas && (
             <div className="metricas">
               <div className="metrica"><b>{stats.documentos}</b><span>Documentos</span></div>
               <div className="metrica"><b>{stats.paginas.toLocaleString('es-MX')}</b><span>Páginas</span></div>
@@ -184,6 +186,8 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
               <option value="anio">Año</option>
               <option value="paginas">Nº de páginas</option>
             </select>
+            <label className="deslizador" title="Tamaño de las tarjetas">Tamaño<input type="range" min="130" max="360" step="10" value={tamTarjeta} onChange={(e) => setTamTarjeta(Number(e.target.value))} /></label>
+            <button className="btn chico fantasma" onClick={() => setVerMetricas((v) => !v)}>{verMetricas ? 'Ocultar cifras' : 'Ver cifras'}</button>
             <div className="grupo-btn">
               <button className={`btn icono ${modo === 'rejilla' ? 'activo' : ''}`} onClick={() => setModo('rejilla')} title="Rejilla"><LayoutGrid size={16} /></button>
               <button className={`btn icono ${modo === 'lista' ? 'activo' : ''}`} onClick={() => setModo('lista')} title="Lista"><List size={16} /></button>
@@ -213,7 +217,7 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
               </>}
             </Vacio>
           ) : modo === 'rejilla' ? (
-            <div className="rejilla">
+            <div className="rejilla" style={{ '--tarjeta': tamTarjeta + 'px' }}>
               {docs.map((d) => (
                 <div key={d.id} className="tarjeta" onClick={() => vista !== 'papelera' && abrirDoc(d.id, d.pagina_actual)} onContextMenu={(e) => abrirMenu(e, d)}>
                   <div className="portada">
@@ -222,6 +226,8 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
                       {d.n_traducciones > 0 && <span className="chip senal">Traducido</span>}
                       {d.origen === 'sci-hub' && <span className="chip negro" style={{ background: 'var(--tinta)', color: 'var(--papel)' }}>Sci-Hub</span>}
                       {d.origen === 'acceso abierto' && <span className="chip verde">OA</span>}
+                      {d.origen === 'libgen' && <span className="chip azul">LibGen</span>}
+                      {d.origen === 'annas' && <span className="chip azul">Anna's</span>}
                     </div>
                   </div>
                   <div className="acciones"><button className="btn icono chico" onClick={(e) => abrirMenu(e, d)}><MoreVertical size={14} /></button></div>
@@ -249,7 +255,7 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
             </div>
           )}
         </div>
-        {arrastrando && <div className="soltar">Suelta los PDF</div>}
+        {arrastrando && <div className="soltar">Suelta PDF o libros</div>}
       </section>
 
       {menu && <MenuFlotante {...menu} onCerrar={() => setMenu(null)} />}

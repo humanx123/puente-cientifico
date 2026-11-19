@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Save, RefreshCw, FlaskConical, FolderOpen, Loader2, Cpu, BookMarked, Newspaper, Palette, Info, Trash2, Plus } from 'lucide-react'
 import { api, abrirRuta, abrirUrl, dialogoNativo, IDIOMAS_UI } from '../api.js'
-import { Cabecera, Campo, Casilla, useAviso } from '../ui.jsx'
+import { Cabecera, Campo, Casilla, PanelLateral, useAviso, usePeriodico } from '../ui.jsx'
 
 const PRESETS = [
   { n: 'OpenAI', url: 'https://api.openai.com/v1', m: 'gpt-4o-mini' },
@@ -54,9 +54,9 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
         <button className="btn primario" onClick={guardar}><Save size={15} />Guardar ajustes</button>
       </Cabecera>
       <div className="ajustes" style={{ flex: 1, minHeight: 0 }}>
-        <aside className="filtros">
+        <PanelLateral clave="ajustes" ancho={220} min={150} max={520} titulo="Secciones"><div className="filtros">
           {SECCIONES.map((s) => { const I = s.icono; return <button key={s.id} className={`filtro ${sec === s.id ? 'activo' : ''}`} onClick={() => setSec(s.id)}><I size={16} />{s.texto}</button> })}
-        </aside>
+        </div></PanelLateral>
         <div className="cuerpo cuerpo-pad" style={{ maxWidth: 980 }}>
           {sec === 'ia' && (
             <div className="col">
@@ -120,6 +120,22 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
 
           {sec === 'literatura' && (
             <div className="col">
+              <PanelTunel l={l} set={set} />
+              <div className="caja">
+                <div className="caja-cab"><span className="num">LB</span>LibGen y Anna's Archive</div>
+                <div className="caja-cuerpo form-rejilla">
+                  <Campo etiqueta="Espejo de LibGen" ayuda="Dominio de libgen-api-enhanced: li, bz, la, vg, gl…">
+                    <input className="entrada mono" value={l.libgen_espejo} onChange={(e) => set('literatura', 'libgen_espejo', e.target.value.replace(/^\./, ''))} />
+                  </Campo>
+                  <Campo etiqueta="Clave de miembro de Anna's Archive (opcional)" ayuda="Activa la descarga rápida oficial. Sin clave se descarga por md5 desde LibGen.">
+                    <input className="entrada mono" type="password" placeholder={l.annas_clave_configurada ? '•••• guardada' : ''} value={l.annas_clave} onChange={(e) => set('literatura', 'annas_clave', e.target.value)} />
+                  </Campo>
+                  <Campo etiqueta="Dominios de Anna's Archive (se prueban en orden)" ancho ayuda="Cambian con frecuencia: consulta la sección FAQ de un espejo que funcione. Admite direcciones .onion si usas Tor.">
+                    <ListaEditable valores={l.annas_dominios} onChange={(v) => set('literatura', 'annas_dominios', v)} placeholder="annas-archive.xx" />
+                  </Campo>
+                  <div className="ancho"><Casilla checked={l.annas_doh} onChange={(v) => set('literatura', 'annas_doh', v)}>Resolver con DNS sobre HTTPS (Cloudflare) si el DNS de mi proveedor no encuentra el dominio</Casilla></div>
+                </div>
+              </div>
               <div className="form-rejilla">
                 <Campo etiqueta="Fuente de PDF por defecto">
                   <select className="entrada" value={l.fuente} onChange={(e) => set('literatura', 'fuente', e.target.value)}>
@@ -148,13 +164,6 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
                 <Campo etiqueta="Reintentos de red"><input className="entrada mono" type="number" min="0" max="10" value={l.reintentos} onChange={(e) => set('literatura', 'reintentos', Number(e.target.value))} /></Campo>
                 <Campo etiqueta="Agente de usuario (User-Agent)" ancho><input className="entrada mono" value={l.agente_usuario} onChange={(e) => set('literatura', 'agente_usuario', e.target.value)} /></Campo>
                 <div className="ancho"><Casilla checked={l.sobrescribir} onChange={(v) => set('literatura', 'sobrescribir', v)}>Sobrescribir archivos con el mismo nombre en la carpeta de copia</Casilla></div>
-                <div className="ancho"><Casilla checked={l.proxy_activo} onChange={(v) => set('literatura', 'proxy_activo', v)}>Usar proxy para literatura</Casilla></div>
-                {l.proxy_activo && <>
-                  <Campo etiqueta="Tipo de proxy"><select className="entrada" value={l.proxy_tipo} onChange={(e) => set('literatura', 'proxy_tipo', e.target.value)}><option value="http">HTTP</option><option value="socks5">SOCKS5</option></select></Campo>
-                  <Campo etiqueta="Servidor : puerto"><div style={{ display: 'flex', gap: 8 }}><input className="entrada mono" value={l.proxy_host} onChange={(e) => set('literatura', 'proxy_host', e.target.value)} /><input className="entrada mono" style={{ width: 100 }} value={l.proxy_puerto} onChange={(e) => set('literatura', 'proxy_puerto', e.target.value)} /></div></Campo>
-                  <Campo etiqueta="Usuario (opcional)"><input className="entrada" value={l.proxy_usuario} onChange={(e) => set('literatura', 'proxy_usuario', e.target.value)} /></Campo>
-                  <Campo etiqueta="Contraseña (opcional)"><input className="entrada" type="password" placeholder={l.proxy_clave_configurada ? '•••• guardada' : ''} value={l.proxy_clave} onChange={(e) => set('literatura', 'proxy_clave', e.target.value)} /></Campo>
-                </>}
                 <Campo etiqueta="Correo para OpenAlex (opcional)" ayuda="Entra en el «polite pool», con límites más amplios."><input className="entrada" value={l.openalex_correo} onChange={(e) => set('literatura', 'openalex_correo', e.target.value)} /></Campo>
                 <Campo etiqueta="Clave de API de OpenAlex (opcional)"><input className="entrada mono" type="password" placeholder={l.openalex_clave_configurada ? '•••• guardada' : ''} value={l.openalex_clave} onChange={(e) => set('literatura', 'openalex_clave', e.target.value)} /></Campo>
               </div>
@@ -171,6 +180,12 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
 
           {sec === 'apariencia' && (
             <div className="form-rejilla">
+              <Campo etiqueta="Skin" ayuda="Brutalista: bordes gruesos y sombras duras. Minimalista: limpio, bordes finos y esquinas suaves.">
+                <div className="grupo-btn"><button className={`btn ${a.apariencia.skin !== 'minimalista' ? 'activo' : ''}`} onClick={() => set('apariencia', 'skin', 'brutalista')}>Brutalista</button><button className={`btn ${a.apariencia.skin === 'minimalista' ? 'activo' : ''}`} onClick={() => set('apariencia', 'skin', 'minimalista')}>Minimalista</button></div>
+              </Campo>
+              <Campo etiqueta="Diseño de paneles" ayuda="Arrastra el borde de cualquier panel para cambiar su ancho; doble clic para ocultarlo. Ctrl+B oculta el menú.">
+                <button className="btn" onClick={() => { Object.keys(localStorage).filter((k) => k.startsWith('pc.panel.') || k === 'pc.nav.plegada').forEach((k) => localStorage.removeItem(k)); location.reload() }}>Restablecer paneles</button>
+              </Campo>
               <Campo etiqueta="Tema">
                 <div className="grupo-btn"><button className={`btn ${a.apariencia.tema === 'claro' ? 'activo' : ''}`} onClick={() => set('apariencia', 'tema', 'claro')}>Claro</button><button className={`btn ${a.apariencia.tema === 'oscuro' ? 'activo' : ''}`} onClick={() => set('apariencia', 'tema', 'oscuro')}>Oscuro</button></div>
               </Campo>
@@ -191,6 +206,9 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
                     <li><b>PageBridge</b> (txp666): biblioteca PDF, traducción con maquetación, vista comparada, glosarios, asistente y búsqueda de literatura.</li>
                     <li><b>SciHubEVA</b> (leovan): cliente de Sci-Hub con espejos, XPath, CAPTCHA, rangos, proxy y nombres de archivo.</li>
                     <li><b>science-hub</b> (goldruma): agregador de avisos y noticias con etiquetas por nivel, área y categoría.</li>
+                    <li><b>libgen-api-enhanced</b> (onurhanak): búsqueda en Library Genesis por título y autor, temas, filtros y enlaces directos.</li>
+                    <li><b>Anna's Archive</b> (LilyLoops/annas-archive): búsqueda en su catálogo unificado y descarga rápida de miembros.</li>
+                    <li><b>Tor</b> (The Tor Project): túnel de privacidad para literatura, con puentes Snowflake y obfs4.</li>
                   </ul>
                   <div className="fila">
                     <button className="btn chico" onClick={() => abrirUrl('https://github.com/txp666/PageBridge')}>PageBridge</button>
@@ -275,6 +293,67 @@ function PanelFreeLLMAPI({ t, set, setAjustes, cargarModelos, cargandoM }) {
           </div>
         </Campo>
         <div className="ancho"><Casilla checked={t.freellmapi_autoarranque} onChange={(v) => set('traduccion', 'freellmapi_autoarranque', v)}>Iniciar FreeLLMAPI automáticamente cuando haga falta traducir o preguntar</Casilla></div>
+      </div>
+    </div>
+  )
+}
+
+function PanelTunel({ l, set }) {
+  const avisar = useAviso()
+  const [t, setT] = useState(null)
+  usePeriodico(async () => { try { setT(await api.get('/api/tunel')) } catch { /* */ } }, 2500)
+  const accion = async (acc) => {
+    try { await api.put('/api/ajustes', { literatura: { tunel: l.tunel, tor_puentes: l.tor_puentes, tor_puentes_propios: l.tor_puentes_propios, tor_salida: l.tor_salida } }); setT(await api.post(`/api/tunel/${acc}`)) }
+    catch (e) { avisar(e.message, 'error') }
+  }
+  return (
+    <div className="caja">
+      <div className="caja-cab"><span className="num">VPN</span>Túnel de privacidad para literatura</div>
+      <div className="caja-cuerpo col">
+        <div className="tenue" style={{ fontSize: 12.5 }}>Solo afecta a búsquedas y descargas de literatura (OpenAlex, Sci-Hub, LibGen, Anna's Archive). La IA y las noticias usan tu conexión normal. No necesita permisos de administrador.</div>
+        <div className="grupo-btn" style={{ width: 'fit-content' }}>
+          {[['directo', 'Directo'], ['tor', 'Tor integrado (código abierto)'], ['proxy', 'Proxy de mi VPN']].map(([k, txt]) => (
+            <button key={k} className={`btn ${l.tunel === k ? 'activo' : ''}`} disabled={k === 'tor' && t && !t.disponible} onClick={() => set('literatura', 'tunel', k)}>{txt}</button>
+          ))}
+        </div>
+        {l.tunel === 'tor' && (
+          <div className="form-rejilla">
+            <Campo etiqueta="Estado">
+              <div className="fila">
+                <span className="tunel-chip"><span className={`luz ${t?.estado}`} />{t?.estado === 'listo' ? 'Conectado' : t?.estado === 'iniciando' ? `Conectando ${t.progreso}%` : t?.estado === 'error' ? 'Error' : 'Apagado'}</span>
+                {t?.estado === 'listo' || t?.estado === 'iniciando'
+                  ? <button className="btn chico" onClick={() => accion('detener')}>Detener</button>
+                  : <button className="btn chico primario" onClick={() => accion('iniciar')}>Conectar ahora</button>}
+              </div>
+              {t?.mensaje && <small className="mono">{t.mensaje}</small>}
+            </Campo>
+            <Campo etiqueta="Puentes (si tu red bloquea Tor)">
+              <select className="entrada" value={l.tor_puentes} onChange={(e) => set('literatura', 'tor_puentes', e.target.value)}>
+                <option value="ninguno">Sin puentes</option><option value="snowflake">Snowflake (recomendado si hay bloqueo)</option>
+                <option value="obfs4">obfs4 integrados</option><option value="propios">Mis puentes</option>
+              </select>
+            </Campo>
+            {l.tor_puentes === 'propios' && (
+              <Campo etiqueta="Líneas de puente" ancho ayuda="Pégalas desde bridges.torproject.org, una por línea.">
+                <textarea className="entrada" rows={4} value={l.tor_puentes_propios} onChange={(e) => set('literatura', 'tor_puentes_propios', e.target.value)} placeholder="obfs4 1.2.3.4:443 FINGERPRINT cert=… iat-mode=0" />
+              </Campo>
+            )}
+            <Campo etiqueta="Países de salida (opcional)" ayuda="Códigos ISO separados por comas, p. ej. de,nl,ch.">
+              <input className="entrada mono" value={l.tor_salida} onChange={(e) => set('literatura', 'tor_salida', e.target.value)} />
+            </Campo>
+          </div>
+        )}
+        {l.tunel === 'proxy' && (
+          <div className="form-rejilla">
+            <Campo etiqueta="Tipo de proxy"><select className="entrada" value={l.proxy_tipo} onChange={(e) => set('literatura', 'proxy_tipo', e.target.value)}><option value="socks5">SOCKS5</option><option value="http">HTTP</option></select></Campo>
+            <Campo etiqueta="Servidor : puerto" ayuda="Muchas VPN exponen un proxy local (p. ej. Mysterium, Proton, Mullvad con SOCKS5).">
+              <div style={{ display: 'flex', gap: 8 }}><input className="entrada mono" value={l.proxy_host} onChange={(e) => set('literatura', 'proxy_host', e.target.value)} /><input className="entrada mono" style={{ width: 100 }} value={l.proxy_puerto} onChange={(e) => set('literatura', 'proxy_puerto', e.target.value)} /></div>
+            </Campo>
+            <Campo etiqueta="Usuario (opcional)"><input className="entrada" value={l.proxy_usuario} onChange={(e) => set('literatura', 'proxy_usuario', e.target.value)} /></Campo>
+            <Campo etiqueta="Contraseña (opcional)"><input className="entrada" type="password" placeholder={l.proxy_clave_configurada ? '•••• guardada' : ''} value={l.proxy_clave} onChange={(e) => set('literatura', 'proxy_clave', e.target.value)} /></Campo>
+          </div>
+        )}
+        <div className="tenue" style={{ fontSize: 12 }}>Guarda los ajustes para aplicar el modo. Tor es más lento en descargas grandes.</div>
       </div>
     </div>
   )
