@@ -92,7 +92,7 @@ def _dominios() -> list[str]:
 
 def describir_respuesta(r: requests.Response) -> str:
     """Qué hay detrás de una respuesta fallida: reto anti-robots, bloqueo judicial, dominio aparcado…"""
-    texto = r.text[:8000].lower() if r.headers.get("Content-Type", "").startswith("text") else ""
+    texto = (r.text or "")[:8000].lower()  # sin filtrar por Content-Type: un reto puede llegar sin cabecera text/*
     titulo = re.search(r"<title>([^<]{0,80})", texto)
     titulo = titulo.group(1).strip() if titulo else ""
     if "forsale" in texto or "domain is for sale" in texto:
@@ -120,7 +120,7 @@ def _get(ruta: str, params: dict | None = None, timeout: int = 30) -> tuple[requ
             except requests.RequestException as e:
                 errores.append(f"{etiqueta}: sin conexión ({type(e).__name__})")
                 continue
-            texto = r.text[:5000].lower() if r.headers.get("Content-Type", "").startswith("text") else ""
+            texto = (r.text or "")[:5000].lower()
             if r.status_code == 200 and "forsale" not in texto and "domain is for sale" not in texto:
                 return r, base
             errores.append(f"{etiqueta}: {describir_respuesta(r)}")
