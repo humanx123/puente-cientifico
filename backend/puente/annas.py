@@ -137,7 +137,7 @@ def _get(ruta: str, params: dict | None = None, timeout: int = 30) -> tuple[requ
             errores.append(f"{urllib.parse.urlsplit(base).hostname}: el navegador integrado tampoco superó la verificación")
     elif retados:
         errores.append("abre la app con su ventana (no en el navegador) para superar la verificación automáticamente")
-    raise AnnasError("Ningún dominio de Anna's Archive respondió (" + "; ".join(errores[:8]) + "). "
+    raise AnnasError("Ningún dominio de Anna's Archive respondió (" + "; ".join(errores) + "). "
                      "Revisa la lista de dominios o ejecuta Ajustes → Diagnóstico.")
 
 

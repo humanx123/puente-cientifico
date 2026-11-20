@@ -136,6 +136,19 @@ def _reto_activo(ventana) -> bool:
     return any(r in t for r in RETO) or _js(ventana, "document.readyState") != "complete"
 
 
+def _probar(v, url: str, espera: int = 8) -> bool:
+    """¿Responde `url` con 200 y sin reto desde dentro de la ventana? (la única prueba fiable de verificación)"""
+    _js(v, _JS_TEXTO % json.dumps(url))
+    fin = time.time() + espera
+    while time.time() < fin:
+        r = _js(v, "window.__pcTxt")
+        if r:
+            d = json.loads(r)
+            return d.get("s") == 200 and not any(x in str(d.get("t", ""))[:4000].lower() for x in RETO)
+        time.sleep(0.4)
+    return False
+
+
 def _sesion_para(base: str, log=None, espera: int = 120):
     """Ventana Edge que supera el reto del sitio una vez y luego se oculta; se reutiliza en la sesión."""
     import webview
@@ -148,13 +161,16 @@ def _sesion_para(base: str, log=None, espera: int = 120):
         if _js(v, "document.readyState") in ("interactive", "complete"):
             break
         time.sleep(0.5)
-    fin, avisado = time.time() + espera, False
-    while time.time() < fin and _reto_activo(v):
+    fin, avisado, superada = time.time() + espera, False, False
+    while time.time() < fin:
+        if _probar(v, base + "/"):
+            superada = True
+            break
         if not avisado:
             log(f"{base.split('//')[-1]} pide verificación anti-robots: se resuelve en la ventana pequeña (normalmente sola).", "aviso")
             avisado = True
-        time.sleep(1.5)
-    if _reto_activo(v):
+        time.sleep(2)
+    if not superada:
         try:
             v.destroy()
         except Exception:
