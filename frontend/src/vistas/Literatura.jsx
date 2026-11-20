@@ -42,7 +42,7 @@ function TunelChip() {
   const etiqueta = t.modo === 'tor' ? (t.estado === 'listo' ? 'Tor conectado' : t.estado === 'iniciando' ? `Tor ${t.progreso}%` : t.estado === 'error' ? 'Tor con error' : 'Tor en espera')
     : t.modo === 'proxy' ? 'Proxy / VPN' : 'Conexión directa'
   return (
-    <button className="btn tunel-chip" onClick={cambiar} title={t.mensaje || 'Activa o desactiva el túnel Tor solo para búsquedas y descargas de literatura'}>
+    <button className="btn tunel-chip" onClick={cambiar} title={(t.estado === 'error' ? `Error de Tor: ${t.mensaje}. Usa Ajustes → Diagnóstico → Reparar. ` : '') + 'Activa o desactiva el túnel Tor (solo Sci-Hub, LibGen y Anna\'s Archive)'}>
       <span className={`luz ${t.modo === 'tor' ? t.estado : ''}`} />{t.modo === 'tor' ? <Shield size={14} /> : <ShieldOff size={14} />}{etiqueta}
     </button>
   )

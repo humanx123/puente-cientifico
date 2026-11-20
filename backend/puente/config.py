@@ -95,6 +95,7 @@ DEFAULT_SETTINGS = {
         "annas_clave": "",  # clave de miembro (descarga rápida); opcional
         "annas_doh": True,  # resolver con DNS sobre HTTPS si el DNS del sistema no resuelve
         "tunel": "directo",  # directo | tor | proxy
+        "tunel_alcance": "bloqueados",  # bloqueados (Sci-Hub, LibGen, Anna's) | todo
         "tor_puerto": 9077,
         "tor_puentes": "ninguno",  # ninguno | snowflake | obfs4 | propios
         "tor_puentes_propios": "",

@@ -117,6 +117,79 @@ def capturar(pagina: str, pdf: str | None = None, titulo: str = "Verificación",
             pass
 
 
+# ---------------------------------------------------------------------------
+# Sesión de navegador persistente por sitio (DDoS-Guard / Cloudflare de Anna's Archive, Sci-Hub…)
+# ---------------------------------------------------------------------------
+_sesiones: dict[str, object] = {}
+_JS_TEXTO = r"""
+(() => {
+  window.__pcTxt = null;
+  fetch(%s, {credentials: 'include'}).then(r => r.text().then(t => { window.__pcTxt = JSON.stringify({s: r.status, t: t}) }))
+    .catch(e => { window.__pcTxt = JSON.stringify({s: 0, t: 'ERR:' + e}) });
+  return 1;
+})()
+"""
+
+
+def _reto_activo(ventana) -> bool:
+    t = (_js(ventana, "(document.title + ' ' + (document.body ? document.body.innerText.slice(0, 600) : '')).toLowerCase()", "") or "")
+    return any(r in t for r in RETO) or _js(ventana, "document.readyState") != "complete"
+
+
+def _sesion_para(base: str, log=None, espera: int = 120):
+    """Ventana Edge que supera el reto del sitio una vez y luego se oculta; se reutiliza en la sesión."""
+    import webview
+    log = log or (lambda *_: None)
+    v = _sesiones.get(base)
+    if v is not None and _js(v, "1") == 1:
+        return v
+    v = webview.create_window(f"Puente Científico · verificando {base.split('//')[-1]}", base + "/", width=760, height=560)
+    for _ in range(60):
+        if _js(v, "document.readyState") in ("interactive", "complete"):
+            break
+        time.sleep(0.5)
+    fin, avisado = time.time() + espera, False
+    while time.time() < fin and _reto_activo(v):
+        if not avisado:
+            log(f"{base.split('//')[-1]} pide verificación anti-robots: se resuelve en la ventana pequeña (normalmente sola).", "aviso")
+            avisado = True
+        time.sleep(1.5)
+    if _reto_activo(v):
+        try:
+            v.destroy()
+        except Exception:
+            pass
+        return None
+    try:
+        v.hide()
+    except Exception:
+        pass
+    _sesiones[base] = v
+    return v
+
+
+def obtener_texto(base: str, url: str, log=None, espera: int = 60) -> tuple[int, str] | None:
+    """GET de `url` desde dentro de la sesión verificada de `base` (mismo origen, con sus cookies)."""
+    v = _sesion_para(base, log)
+    if v is None:
+        return None
+    _js(v, _JS_TEXTO % json.dumps(url))
+    fin = time.time() + espera
+    while time.time() < fin:
+        r = _js(v, "window.__pcTxt")
+        if r:
+            d = json.loads(r)
+            if str(d.get("t", "")).startswith("ERR:"):
+                _sesiones.pop(base, None)
+                return None
+            if d.get("s") in (403, 503) and any(x in d.get("t", "")[:4000].lower() for x in RETO):
+                _sesiones.pop(base, None)  # la verificación caducó: se rehará la próxima vez
+                return None
+            return int(d.get("s") or 0), d.get("t", "")
+        time.sleep(0.4)
+    return None
+
+
 def vigilar_descargas(desde: float, segundos: int = 600) -> Path | None:
     """Plan B: el usuario descarga el PDF a mano en la ventana o en su navegador."""
     carpeta = Path.home() / "Downloads"

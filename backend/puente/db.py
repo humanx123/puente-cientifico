@@ -12,6 +12,7 @@ PRAGMA journal_mode=WAL;
 CREATE TABLE IF NOT EXISTS carpetas (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     nombre TEXT NOT NULL UNIQUE,
+    padre_id INTEGER REFERENCES carpetas(id) ON DELETE SET NULL,
     creada TEXT DEFAULT (datetime('now','localtime'))
 );
 CREATE TABLE IF NOT EXISTS documentos (
@@ -142,6 +143,10 @@ def init() -> None:
             return
         conn = _connect()
         conn.executescript(SCHEMA)
+        # Migración idempotente: bases creadas antes de las subcarpetas no tienen padre_id.
+        columnas = {r[1] for r in conn.execute("PRAGMA table_info(carpetas)").fetchall()}
+        if "padre_id" not in columnas:
+            conn.execute("ALTER TABLE carpetas ADD COLUMN padre_id INTEGER REFERENCES carpetas(id) ON DELETE SET NULL")
         conn.commit()
         conn.close()
         _initialized = True

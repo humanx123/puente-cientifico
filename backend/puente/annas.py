@@ -79,9 +79,9 @@ def _preparar_dns(host: str) -> None:
             _DNS[host] = ip
 
 
-def _sesion() -> requests.Session:
+def _sesion(forzar: str | None = None) -> requests.Session:
     from .literature import sesion
-    return sesion()
+    return sesion("annas", forzar)
 
 
 def _dominios() -> list[str]:
@@ -90,22 +90,67 @@ def _dominios() -> list[str]:
     return [d if d.startswith("http") else "https://" + d for d in doms]
 
 
+def describir_respuesta(r: requests.Response) -> str:
+    """Qué hay detrás de una respuesta fallida: reto anti-robots, bloqueo judicial, dominio aparcado…"""
+    texto = r.text[:8000].lower() if r.headers.get("Content-Type", "").startswith("text") else ""
+    titulo = re.search(r"<title>([^<]{0,80})", texto)
+    titulo = titulo.group(1).strip() if titulo else ""
+    if "forsale" in texto or "domain is for sale" in texto:
+        return "dominio aparcado (ya no es Anna's Archive)"
+    if "just a moment" in texto or "cf-chl" in texto or "challenge-platform" in texto:
+        return "reto anti-robots de Cloudflare"
+    if "ddos-guard" in texto:
+        return "DDoS-Guard"
+    if "seized" in texto or "court order" in texto or "injunction" in texto or "blocked" in texto:
+        return "bloqueado por orden judicial o del proveedor" + (f" («{titulo}»)" if titulo else "")
+    return f"HTTP {r.status_code}" + (f" «{titulo}»" if titulo else "")
+
+
 def _get(ruta: str, params: dict | None = None, timeout: int = 30) -> tuple[requests.Response, str]:
     errores = []
-    for base in _dominios():
-        host = urllib.parse.urlsplit(base).hostname or ""
-        _preparar_dns(host)
-        try:
-            r = _sesion().get(base + ruta, params=params, timeout=timeout)
-        except requests.RequestException as e:
-            errores.append(f"{host}: {type(e).__name__}")
-            continue
-        texto = r.text[:5000].lower() if r.headers.get("Content-Type", "").startswith("text") else ""
-        if r.status_code == 200 and "forsale" not in texto and "domain is for sale" not in texto:
-            return r, base
-        errores.append(f"{host}: HTTP {r.status_code}" + (" (dominio aparcado)" if "forsale" in texto else ""))
-    raise AnnasError("Ningún dominio de Anna's Archive respondió (" + "; ".join(errores[:6]) + "). "
-                     "Añade un dominio vigente o un proxy en Ajustes → Literatura.")
+    rutas = [None] + (["directo"] if load_settings()["literatura"].get("tunel", "directo") != "directo" else [])
+    for forzar in rutas:
+        for base in _dominios():
+            host = urllib.parse.urlsplit(base).hostname or ""
+            if forzar == "directo" or load_settings()["literatura"].get("tunel", "directo") == "directo":
+                _preparar_dns(host)
+            etiqueta = host + (" (directo)" if forzar == "directo" else "")
+            try:
+                r = _sesion(forzar).get(base + ruta, params=params, timeout=timeout)
+            except requests.RequestException as e:
+                errores.append(f"{etiqueta}: sin conexión ({type(e).__name__})")
+                continue
+            texto = r.text[:5000].lower() if r.headers.get("Content-Type", "").startswith("text") else ""
+            if r.status_code == 200 and "forsale" not in texto and "domain is for sale" not in texto:
+                return r, base
+            errores.append(f"{etiqueta}: {describir_respuesta(r)}")
+    # Retos anti-robots (DDoS-Guard / Cloudflare): un navegador real (WebView2) los supera
+    retados = [b for b in _dominios() if any(urllib.parse.urlsplit(b).hostname in e and ("DDoS-Guard" in e or "Cloudflare" in e)
+                                             for e in errores)]
+    from . import navegador
+    if retados and navegador.disponible():
+        consulta = ("?" + urllib.parse.urlencode(params, doseq=True)) if params else ""
+        for base in retados:
+            r = navegador.obtener_texto(base, base + ruta + consulta)
+            if r and r[0] == 200:
+                return _RespuestaNavegador(r[1], base + ruta), base
+            errores.append(f"{urllib.parse.urlsplit(base).hostname}: el navegador integrado tampoco superó la verificación")
+    elif retados:
+        errores.append("abre la app con su ventana (no en el navegador) para superar la verificación automáticamente")
+    raise AnnasError("Ningún dominio de Anna's Archive respondió (" + "; ".join(errores[:8]) + "). "
+                     "Revisa la lista de dominios o ejecuta Ajustes → Diagnóstico.")
+
+
+class _RespuestaNavegador:
+    """Respuesta obtenida dentro de la ventana verificada (misma interfaz mínima que requests.Response)."""
+
+    def __init__(self, texto: str, url: str):
+        self.text, self.url, self.status_code = texto, url, 200
+        self.headers = {"Content-Type": "text/html"}
+
+    def json(self):
+        import json
+        return json.loads(self.text)
 
 
 # ---------------------------------------------------------------------------

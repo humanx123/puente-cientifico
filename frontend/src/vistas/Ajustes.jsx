@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Save, RefreshCw, FlaskConical, FolderOpen, Loader2, Cpu, BookMarked, Newspaper, Palette, Info, Trash2, Plus } from 'lucide-react'
+import { Save, RefreshCw, FlaskConical, FolderOpen, Loader2, Cpu, BookMarked, Newspaper, Palette, Info, Trash2, Plus, Stethoscope, Wrench } from 'lucide-react'
 import { api, abrirRuta, abrirUrl, dialogoNativo, IDIOMAS_UI } from '../api.js'
 import { Cabecera, Campo, Casilla, PanelLateral, useAviso, usePeriodico } from '../ui.jsx'
 
@@ -18,6 +18,7 @@ const SECCIONES = [
   { id: 'literatura', texto: 'Literatura y Sci-Hub', icono: BookMarked },
   { id: 'noticias', texto: 'Noticias', icono: Newspaper },
   { id: 'apariencia', texto: 'Apariencia', icono: Palette },
+  { id: 'diagnostico', texto: 'Diagnóstico', icono: Stethoscope },
   { id: 'acerca', texto: 'Acerca de', icono: Info },
 ]
 
@@ -196,6 +197,8 @@ export default function Ajustes({ ajustes, setAjustes, estado }) {
             </div>
           )}
 
+          {sec === 'diagnostico' && <Diagnostico setAjustes={setAjustes} />}
+
           {sec === 'acerca' && (
             <div className="col">
               <div className="caja">
@@ -298,6 +301,61 @@ function PanelFreeLLMAPI({ t, set, setAjustes, cargarModelos, cargandoM }) {
   )
 }
 
+function Diagnostico({ setAjustes }) {
+  const avisar = useAviso()
+  const [d, setD] = useState(null)
+  const [acciones, setAcciones] = useState(null)
+  const [ocupado, setOcupado] = useState(null)
+  const ejecutar = async () => {
+    setOcupado('diag'); setAcciones(null)
+    try { setD(await api.post('/api/diagnostico')) } catch (e) { avisar(e.message, 'error') } finally { setOcupado(null) }
+  }
+  const reparar = async () => {
+    setOcupado('rep')
+    try {
+      const r = await api.post('/api/diagnostico/reparar')
+      setAcciones(r.acciones); setD(r.diagnostico); setAjustes(await api.get('/api/ajustes'))
+      avisar('Reparación terminada.', 'ok')
+    } catch (e) { avisar(e.message, 'error') } finally { setOcupado(null) }
+  }
+  const grupos = d ? [...new Set(d.resultados.map((r) => r.grupo))] : []
+  return (
+    <div className="col">
+      <div className="aviso-legal" style={{ background: 'var(--papel-2)', color: 'var(--tinta)' }}>
+        Comprueba cada servicio por la conexión directa y, si está activo, por el túnel (Tor o tu VPN). Después puede reparar
+        automáticamente: reiniciar Tor (con puentes Snowflake si no conecta), poner primero los espejos y dominios que funcionan y elegir un espejo de LibGen que responda.
+        Tarda de 20 a 60 segundos.
+      </div>
+      <div className="fila">
+        <button className="btn primario" onClick={ejecutar} disabled={!!ocupado}>{ocupado === 'diag' ? <Loader2 size={15} className="girar" /> : <Stethoscope size={15} />}Ejecutar diagnóstico</button>
+        <button className="btn negro" onClick={reparar} disabled={!!ocupado || !d}>{ocupado === 'rep' ? <Loader2 size={15} className="girar" /> : <Wrench size={15} />}Reparar automáticamente</button>
+      </div>
+      {acciones && (
+        <div className="caja"><div className="caja-cab"><span className="num">OK</span>Reparaciones aplicadas</div>
+          <div className="caja-cuerpo"><ul style={{ margin: 0, paddingLeft: 18 }}>{acciones.map((a, i) => <li key={i}>{a}</li>)}</ul></div></div>
+      )}
+      {d?.sugerencias?.length > 0 && (
+        <div className="caja"><div className="caja-cab"><span className="num">!</span>Recomendaciones</div>
+          <div className="caja-cuerpo"><ul style={{ margin: 0, paddingLeft: 18 }}>{d.sugerencias.map((a, i) => <li key={i}>{a}</li>)}</ul></div></div>
+      )}
+      {grupos.map((g) => (
+        <table key={g} className="tabla">
+          <thead><tr><th style={{ width: 70 }}>Estado</th><th>{g}</th><th style={{ width: 90 }}>Ruta</th><th>Detalle</th><th style={{ width: 70 }}>ms</th></tr></thead>
+          <tbody>{d.resultados.filter((r) => r.grupo === g).map((r, i) => (
+            <tr key={i}>
+              <td style={{ padding: '6px 10px' }}><span className={`chip ${r.ok ? 'verde' : 'rojo'}`}>{r.ok ? 'OK' : 'FALLA'}</span></td>
+              <td style={{ padding: '6px 10px' }}><b>{r.nombre}</b></td>
+              <td style={{ padding: '6px 10px' }} className="mono">{r.ruta === 'tunel' ? 'túnel' : r.ruta}</td>
+              <td style={{ padding: '6px 10px', fontSize: 12.5 }}>{r.detalle}</td>
+              <td style={{ padding: '6px 10px' }} className="mono tenue">{r.ms ?? ''}</td>
+            </tr>
+          ))}</tbody>
+        </table>
+      ))}
+    </div>
+  )
+}
+
 function PanelOpenAlex({ l, set, guardar }) {
   const avisar = useAviso()
   const [prueba, setPrueba] = useState(null)
@@ -372,6 +430,14 @@ function PanelTunel({ l, set }) {
             <button key={k} className={`btn ${l.tunel === k ? 'activo' : ''}`} disabled={k === 'tor' && t && !t.disponible} onClick={() => set('literatura', 'tunel', k)}>{txt}</button>
           ))}
         </div>
+        {l.tunel !== 'directo' && (
+          <Campo etiqueta="Qué pasa por el túnel">
+            <select className="entrada" value={l.tunel_alcance || 'bloqueados'} onChange={(e) => set('literatura', 'tunel_alcance', e.target.value)}>
+              <option value="bloqueados">Solo sitios bloqueados: Sci-Hub, LibGen y Anna's Archive (recomendado)</option>
+              <option value="todo">Toda la literatura (OpenAlex por Tor suele dar error 429 y pasa a Crossref)</option>
+            </select>
+          </Campo>
+        )}
         {l.tunel === 'tor' && (
           <div className="form-rejilla">
             <Campo etiqueta="Estado">

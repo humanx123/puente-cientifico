@@ -89,13 +89,34 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
     try { setResGlobal(await api.get('/api/buscar' + qs({ q: global }))) } catch (err) { avisar(err.message, 'error') }
   }
 
-  const nuevaCarpeta = async () => {
-    const nombre = prompt('Nombre de la carpeta nueva:')
+  const nuevaCarpeta = async (padre_id = null) => {
+    const nombre = prompt(padre_id ? 'Nombre de la subcarpeta:' : 'Nombre de la carpeta nueva:')
     if (!nombre) return
-    try { await api.post('/api/carpetas', { nombre }); cargar() } catch (e) { avisar(e.message, 'error') }
+    try { await api.post('/api/carpetas', { nombre, padre_id }); cargar() } catch (e) { avisar(e.message, 'error') }
   }
 
   const accion = async (fn, msg) => { try { await fn(); if (msg) avisar(msg, 'ok'); cargar(); refrescar() } catch (e) { avisar(e.message, 'error') } }
+
+  // En el árbol (orden de profundidad), los descendientes de una carpeta son las siguientes con más nivel.
+  const descendientesDe = (c) => {
+    const ids = new Set()
+    for (let j = carpetas.findIndex((o) => o.id === c.id) + 1; j < carpetas.length && carpetas[j].nivel > c.nivel; j++) ids.add(carpetas[j].id)
+    return ids
+  }
+
+  const menuCarpeta = (c) => {
+    const excluir = descendientesDe(c)
+    const destinos = carpetas.filter((o) => o.id !== c.id && !excluir.has(o.id))
+    return [
+      { texto: 'Nueva subcarpeta', icono: <FolderPlus size={15} />, accion: () => nuevaCarpeta(c.id) },
+      { texto: 'Renombrar', icono: <Pencil size={15} />, accion: () => { const n = prompt('Nuevo nombre:', c.nombre); n && accion(() => api.patch(`/api/carpetas/${c.id}`, { nombre: n })) } },
+      '-',
+      ...(c.nivel > 0 ? [{ texto: 'Mover a la raíz', icono: <FolderOpen size={15} />, accion: () => accion(() => api.patch(`/api/carpetas/${c.id}`, { padre_id: null })) }] : []),
+      ...destinos.map((o) => ({ texto: `Mover dentro de «${o.ruta}»`, icono: <Folder size={15} />, accion: () => accion(() => api.patch(`/api/carpetas/${c.id}`, { padre_id: o.id })) })),
+      '-',
+      { texto: 'Eliminar carpeta', icono: <Trash2 size={15} />, peligro: true, accion: () => confirm('Los documentos y subcarpetas pasan a la carpeta superior. ¿Continuar?') && accion(async () => { await api.del(`/api/carpetas/${c.id}`); if (carpeta === c.id) setCarpeta(null) }) },
+    ]
+  }
 
   const abrirMenu = (e, d) => {
     e.preventDefault(); e.stopPropagation()
@@ -107,7 +128,7 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
       { texto: d.favorito ? 'Quitar de favoritos' : 'Marcar favorito', icono: <Star size={15} />, accion: () => accion(() => api.patch(`/api/documentos/${d.id}`, { favorito: d.favorito ? 0 : 1 })) },
       { texto: 'Editar datos', icono: <Pencil size={15} />, accion: () => setEditar({ ...d }) },
       '-',
-      ...carpetas.map((c) => ({ texto: `Mover a «${c.nombre}»`, icono: <Folder size={15} />, accion: () => accion(() => api.patch(`/api/documentos/${d.id}`, { carpeta_id: c.id }), `Movido a ${c.nombre}.`) })),
+      ...carpetas.map((c) => ({ texto: `Mover a «${c.ruta}»`, icono: <Folder size={15} />, accion: () => accion(() => api.patch(`/api/documentos/${d.id}`, { carpeta_id: c.id }), `Movido a ${c.ruta}.`) })),
       ...(d.carpeta_id ? [{ texto: 'Sacar de la carpeta', icono: <FolderOpen size={15} />, accion: () => accion(() => api.patch(`/api/documentos/${d.id}`, { carpeta_id: null })) }] : []),
       '-',
       { texto: 'Mover a la papelera', icono: <Trash2 size={15} />, peligro: true, accion: () => accion(() => api.post(`/api/documentos/${d.id}/papelera`), 'En la papelera.') },
@@ -133,15 +154,14 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
             </button>
           )
         })}
-        <h4 style={{ display: 'flex', alignItems: 'center' }}>Carpetas<button className="btn fantasma icono chico" style={{ marginLeft: 'auto' }} onClick={nuevaCarpeta} title="Nueva carpeta"><FolderPlus size={14} /></button></h4>
+        <h4 style={{ display: 'flex', alignItems: 'center' }}>Carpetas<button className="btn fantasma icono chico" style={{ marginLeft: 'auto' }} onClick={() => nuevaCarpeta(null)} title="Nueva carpeta"><FolderPlus size={14} /></button></h4>
         {carpetas.length === 0 && <div className="tenue" style={{ padding: '0 16px', fontSize: 12 }}>Sin carpetas todavía.</div>}
         {carpetas.map((c) => (
-          <button key={c.id} className={`filtro ${carpeta === c.id ? 'activo' : ''}`} onClick={() => { setVista('todos'); setCarpeta(c.id) }}
-            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: [
-              { texto: 'Renombrar', icono: <Pencil size={15} />, accion: () => { const n = prompt('Nuevo nombre:', c.nombre); n && accion(() => api.patch(`/api/carpetas/${c.id}`, { nombre: n })) } },
-              { texto: 'Eliminar carpeta', icono: <Trash2 size={15} />, peligro: true, accion: () => confirm('Los documentos no se borran, solo salen de la carpeta. ¿Continuar?') && accion(() => api.del(`/api/carpetas/${c.id}`)).then(() => setCarpeta(null)) },
-            ] }) }}>
-            <Folder size={16} />{c.nombre}<span className="n">{c.n}</span>
+          <button key={c.id} className={`filtro ${carpeta === c.id ? 'activo' : ''}`} style={{ paddingLeft: 16 + c.nivel * 14 }}
+            title={`${c.ruta} · ${c.n} directos · ${c.n_total} en total`}
+            onClick={() => { setVista('todos'); setCarpeta(c.id) }}
+            onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, items: menuCarpeta(c) }) }}>
+            <Folder size={16} />{c.nombre}<span className="n">{c.n_total}</span>
           </button>
         ))}
         {vista === 'papelera' && docs.length > 0 && (
@@ -156,7 +176,7 @@ export default function Biblioteca({ abrirDoc, version, refrescar, irA }) {
             <button className="btn" onClick={() => importar('carpeta')} disabled={importando}><FolderInput size={16} />Carpeta</button>
             <button className="btn negro" onClick={() => irA('literatura')}><Search size={16} />Buscar literatura</button>
           </div>
-          <input ref={inputRef} type="file" accept=".pdf,.epub,.mobi,.fb2,.cbz,.xps" multiple hidden onChange={(e) => { subirArchivos(e.target.files); e.target.value = '' }} />
+          <input ref={inputRef} type="file" accept=".pdf,.epub,.mobi,.fb2,.cbz,.xps,.oxps" multiple hidden onChange={(e) => { subirArchivos(e.target.files); e.target.value = '' }} />
         </Cabecera>
 
         <div className="cuerpo cuerpo-pad">

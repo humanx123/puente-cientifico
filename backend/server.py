@@ -121,6 +121,34 @@ def abrir_ruta(datos: dict = Body(...)):
     return {"ok": True}
 
 
+@app.post("/api/diagnostico")
+def diagnostico():
+    from puente import diagnostico_red
+    return diagnostico_red.ejecutar()
+
+
+@app.post("/api/diagnostico/reparar")
+def diagnostico_reparar():
+    from puente import diagnostico_red
+    return diagnostico_red.reparar()
+
+
+@app.post("/api/ventana/mostrar")
+def ventana_mostrar():
+    """La segunda copia de la app pide a esta que traiga su ventana al frente."""
+    v = WINDOW["ventana"]
+    if v is None:
+        return {"ok": False}
+    try:
+        v.restore()
+        v.show()
+        v.on_top = True
+        v.on_top = False
+    except Exception:
+        pass
+    return {"ok": True}
+
+
 @app.post("/api/dialogo")
 def dialogo(datos: dict = Body(...)):
     """Diálogos nativos de Windows (abrir PDF, carpeta o guardar)."""
@@ -134,7 +162,7 @@ def dialogo(datos: dict = Body(...)):
     elif tipo == "guardar":
         res = ventana.create_file_dialog(webview.SAVE_DIALOG, save_filename=datos.get("nombre", "archivo.pdf"))
     else:
-        filtros = tuple(datos.get("filtros") or ("PDF y libros (*.pdf;*.epub;*.mobi;*.fb2;*.cbz;*.xps)",
+        filtros = tuple(datos.get("filtros") or ("PDF y libros (*.pdf;*.epub;*.mobi;*.fb2;*.cbz;*.xps;*.oxps)",
                                                  "Documentos PDF (*.pdf)", "Todos los archivos (*.*)"))
         res = ventana.create_file_dialog(webview.OPEN_DIALOG, allow_multiple=bool(datos.get("multiple", True)),
                                          file_types=filtros)
@@ -308,14 +336,25 @@ def carpetas():
     return library.carpetas()
 
 
+def _padre(valor) -> int | None:
+    """Convierte el id de carpeta padre recibido (None, '' o número) a int | None."""
+    if valor in (None, "", 0, "0"):
+        return None
+    return int(valor)
+
+
 @app.post("/api/carpetas")
 def crear_carpeta(datos: dict = Body(...)):
-    return library.crear_carpeta(datos.get("nombre", ""))
+    return library.crear_carpeta(datos.get("nombre", ""), _padre(datos.get("padre_id")))
 
 
 @app.patch("/api/carpetas/{cid}")
-def renombrar_carpeta(cid: int, datos: dict = Body(...)):
-    library.renombrar_carpeta(cid, datos.get("nombre", ""))
+def editar_carpeta(cid: int, datos: dict = Body(...)):
+    """Renombra y/o mueve la carpeta. Solo se aplica lo que venga en el cuerpo."""
+    if "nombre" in datos:
+        library.renombrar_carpeta(cid, datos.get("nombre", ""))
+    if "padre_id" in datos:
+        library.mover_carpeta(cid, _padre(datos.get("padre_id")))
     return {"ok": True}
 
 

@@ -117,13 +117,20 @@ def url_publica(url: str) -> str:
 # ---------------------------------------------------------------------------
 # Sesión HTTP con proxy (SciHubEVA network_utils)
 # ---------------------------------------------------------------------------
-def sesion() -> requests.Session:
+BLOQUEABLES = {"scihub", "libgen", "annas"}  # servicios que algunas redes bloquean
+
+
+def sesion(servicio: str = "general", forzar: str | None = None) -> requests.Session:
+    """Sesión HTTP. Con alcance «bloqueados» (por defecto) solo Sci-Hub, LibGen y Anna's van por el túnel:
+    OpenAlex/Crossref/revistas abiertas funcionan mejor directos (por Tor, OpenAlex responde 429 siempre).
+    forzar = "directo" | "tunel" para el diagnóstico y los reintentos."""
     s = load_settings()["literatura"]
     sess = requests.Session()
     sess.headers.update({"User-Agent": s["agente_usuario"], "Accept-Language": "es,en;q=0.8"})
     from . import tunel
+    usar = forzar == "tunel" or (forzar is None and (s.get("tunel_alcance", "bloqueados") == "todo" or servicio in BLOQUEABLES))
     try:
-        prox = tunel.proxies()  # Tor integrado o proxy de tu VPN; None = directo
+        prox = tunel.proxies() if usar else None  # Tor integrado o proxy de tu VPN; None = directo
     except RuntimeError as e:
         raise LitError(str(e)) from None
     if prox:
@@ -728,7 +735,7 @@ def _procesar_libro(t: dict) -> None:
             except libgen.LibgenError:
                 pass
         try:
-            r = sesion().get(url, timeout=(20, max(_timeout(), 90)), stream=True, verify=False)
+            r = sesion("libgen").get(url, timeout=(20, max(_timeout(), 90)), stream=True, verify=False)
         except requests.RequestException as e:
             r = None
             ultimo = "sin respuesta del servidor (" + type(e).__name__ + ")"
@@ -800,8 +807,9 @@ def _procesar(t: dict) -> None:
             t["estado"], t["documento_id"] = "duplicado", ya["id"]
             _log(t, "Ya está en tu biblioteca.", "ok")
             return
-    sess = sesion()
-    t["_sesion"] = sess
+    sess = sesion()  # copias abiertas y revistas: directo (salvo alcance «todo»)
+    sess_bloq = sesion("scihub")  # Sci-Hub / bibliotecas: por el túnel si está activo
+    t["_sesion"] = sess_bloq
     t["estado"] = "buscando"
     bloqueados: list[tuple[str, str | None, str]] = []  # (página, pdf, fuente) que piden navegador real
     ultimo_error = "No se encontró el PDF."
@@ -810,7 +818,7 @@ def _procesar(t: dict) -> None:
         nonlocal ultimo_error
         _log(t, f"Probando {fuente}: {url[:140]}")
         try:
-            ruta = _descargar(t, sess, url)
+            ruta = _descargar(t, sess_bloq if fuente.startswith("Sci-Hub") else sess, url)
         except LitError as e:
             ultimo_error = str(e)
             if any(x in str(e) for x in ("HTTP 403", "página web", "verificación")):
@@ -830,7 +838,7 @@ def _procesar(t: dict) -> None:
             base = base.rstrip("/")
             _log(t, f"Usando Sci-Hub: {base}")
             try:
-                pdf_url = _resolver_scihub(t, sess, base, q, doi)
+                pdf_url = _resolver_scihub(t, sess_bloq, base, q, doi)
             except LitError as e:
                 ultimo_error = str(e)
                 _log(t, str(e), "aviso")

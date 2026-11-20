@@ -187,7 +187,8 @@ def listar(vista: str = "todos", carpeta_id: int | None = None, q: str = "", ord
         elif vista == "traducidos":
             where.append("EXISTS (SELECT 1 FROM traducciones t WHERE t.documento_id=d.id)")
     if carpeta_id:
-        where.append("d.carpeta_id=?")
+        # Incluye los documentos de la carpeta y de todas sus subcarpetas.
+        where.append(f"d.carpeta_id IN ({_DESCENDIENTES})")
         params.append(carpeta_id)
     if q:
         where.append("(d.titulo LIKE ? OR d.autores LIKE ? OR d.doi LIKE ?)")
@@ -262,30 +263,95 @@ def borrar_definitivo(doc_id: int) -> None:
         p.unlink(missing_ok=True)
 
 
+_DESCENDIENTES = (
+    "WITH RECURSIVE sub(id) AS (SELECT ? UNION ALL"
+    " SELECT c.id FROM carpetas c JOIN sub s ON c.padre_id=s.id) SELECT id FROM sub"
+)
+
+
 def carpetas() -> list[dict]:
-    return db.rows(
+    """Carpetas en orden de árbol (padre antes que hijas). Cada una trae:
+    nivel (0 = raíz), ruta («Padre / Hija»), n (docs directos) y n_total (docs incluyendo subcarpetas)."""
+    filas = db.rows(
         "SELECT c.*, (SELECT COUNT(*) FROM documentos d WHERE d.carpeta_id=c.id AND d.papelera IS NULL) AS n"
         " FROM carpetas c ORDER BY nombre COLLATE NOCASE"
     )
+    ids = {f["id"] for f in filas}
+    por_padre: dict = {}
+    for f in filas:
+        padre = f["padre_id"] if f["padre_id"] in ids else None
+        por_padre.setdefault(padre, []).append(f)
+    salida: list[dict] = []
+
+    def visitar(padre, nivel: int, ruta: list[str]) -> None:
+        for f in por_padre.get(padre, []):
+            f["nivel"] = nivel
+            f["ruta"] = " / ".join(ruta + [f["nombre"]])
+            f["n_total"] = f["n"]
+            salida.append(f)
+            visitar(f["id"], nivel + 1, ruta + [f["nombre"]])
+
+    visitar(None, 0, [])
+    por_id = {f["id"]: f for f in salida}
+    for f in reversed(salida):  # los hijos se procesan antes que sus padres
+        if f["padre_id"] in por_id:
+            por_id[f["padre_id"]]["n_total"] += f["n_total"]
+    return salida
 
 
-def crear_carpeta(nombre: str) -> dict:
+def _descendientes(cid: int) -> set[int]:
+    return {r["id"] for r in db.rows(_DESCENDIENTES, (cid,))}
+
+
+def crear_carpeta(nombre: str, padre_id: int | None = None) -> dict:
     nombre = nombre.strip()
     if not nombre:
         raise LibraryError("Escribe un nombre de carpeta.")
+    if padre_id is not None and not db.row("SELECT id FROM carpetas WHERE id=?", (padre_id,)):
+        raise LibraryError("La carpeta padre no existe.")
+    existente = db.row("SELECT * FROM carpetas WHERE nombre=?", (nombre,))
+    if existente:
+        if existente["padre_id"] == padre_id:
+            return existente
+        raise LibraryError(f"Ya existe una carpeta llamada «{nombre}». Los nombres de carpeta deben ser únicos.")
     with db.tx() as c:
-        c.execute("INSERT OR IGNORE INTO carpetas(nombre) VALUES (?)", (nombre,))
-    return db.row("SELECT * FROM carpetas WHERE nombre=?", (nombre,))
+        cur = c.execute("INSERT INTO carpetas(nombre, padre_id) VALUES (?,?)", (nombre, padre_id))
+    return db.row("SELECT * FROM carpetas WHERE id=?", (cur.lastrowid,))
 
 
 def renombrar_carpeta(cid: int, nombre: str) -> None:
+    nombre = nombre.strip()
+    if not nombre:
+        raise LibraryError("Escribe un nombre de carpeta.")
+    if db.row("SELECT id FROM carpetas WHERE nombre=? AND id<>?", (nombre, cid)):
+        raise LibraryError(f"Ya existe una carpeta llamada «{nombre}».")
     with db.tx() as c:
-        c.execute("UPDATE carpetas SET nombre=? WHERE id=?", (nombre.strip(), cid))
+        c.execute("UPDATE carpetas SET nombre=? WHERE id=?", (nombre, cid))
+
+
+def mover_carpeta(cid: int, padre_id: int | None) -> None:
+    """Mueve una carpeta (con todo su contenido) bajo otra, o a la raíz si padre_id es None."""
+    if not db.row("SELECT id FROM carpetas WHERE id=?", (cid,)):
+        raise LibraryError("Carpeta no encontrada.")
+    if padre_id is not None:
+        if not db.row("SELECT id FROM carpetas WHERE id=?", (padre_id,)):
+            raise LibraryError("La carpeta destino no existe.")
+        if padre_id in _descendientes(cid):  # evita ciclos (incluye mover a sí misma)
+            raise LibraryError("No puedes mover una carpeta dentro de sí misma o de una de sus subcarpetas.")
+    with db.tx() as c:
+        c.execute("UPDATE carpetas SET padre_id=? WHERE id=?", (padre_id, cid))
 
 
 def borrar_carpeta(cid: int) -> None:
+    """Borra la carpeta sin borrar documentos: sus subcarpetas y documentos pasan a la carpeta padre
+    (o quedan en la raíz si era de primer nivel)."""
+    f = db.row("SELECT padre_id FROM carpetas WHERE id=?", (cid,))
+    if not f:
+        return
+    padre = f["padre_id"]
     with db.tx() as c:
-        c.execute("UPDATE documentos SET carpeta_id=NULL WHERE carpeta_id=?", (cid,))
+        c.execute("UPDATE carpetas SET padre_id=? WHERE padre_id=?", (padre, cid))
+        c.execute("UPDATE documentos SET carpeta_id=? WHERE carpeta_id=?", (padre, cid))
         c.execute("DELETE FROM carpetas WHERE id=?", (cid,))
 
 

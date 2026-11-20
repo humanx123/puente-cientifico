@@ -79,6 +79,44 @@ def mensaje_error(texto: str) -> None:
         pass
 
 
+_MUTEX = None
+
+
+def ya_abierta() -> bool:
+    """Instancia única por instalación: un mutex con nombre de Windows (atómico, sin carreras)."""
+    global _MUTEX
+    try:
+        import ctypes
+        import hashlib
+        nombre = "Local\\PuenteCientifico-" + hashlib.sha1(str(HERE).lower().encode()).hexdigest()[:16]
+        _MUTEX = ctypes.windll.kernel32.CreateMutexW(None, False, nombre)
+        return ctypes.windll.kernel32.GetLastError() == 183  # ERROR_ALREADY_EXISTS
+    except Exception:
+        return False
+
+
+def activar_existente(navegador: bool) -> None:
+    """Otra copia ya corre: se le pide que muestre su ventana (o se abre en el navegador) y esta termina."""
+    for _ in range(60):  # la primera copia puede estar arrancando todavía
+        for puerto in range(PUERTO_BASE, PUERTO_BASE + 20):
+            info = _respuesta(puerto)
+            if info and info.get("carpeta") == str(HERE):
+                url = f"http://127.0.0.1:{puerto}/"
+                try:
+                    req = urllib.request.Request(url + "api/ventana/mostrar", data=b"{}", method="POST",
+                                                 headers={"Content-Type": "application/json"})
+                    with urllib.request.urlopen(req, timeout=5) as r:
+                        ok = json.loads(r.read().decode("utf-8")).get("ok")
+                except Exception:
+                    ok = False
+                if navegador or not ok:
+                    webbrowser.open(url)
+                print("Ya había una copia abierta: se activó su ventana.")
+                return
+        time.sleep(0.5)
+    mensaje_error("Puente Científico ya se está abriendo. Espera unos segundos.")
+
+
 def main() -> None:
     _log_a_archivo()
     try:  # la barra de tareas agrupa la ventana con el acceso directo (icono propio, no el de Python)
@@ -87,6 +125,9 @@ def main() -> None:
     except Exception:
         pass
     navegador = "--navegador" in sys.argv
+    if ya_abierta():
+        activar_existente(navegador)
+        return
     puerto, en_marcha = elegir_puerto()
     url = f"http://127.0.0.1:{puerto}/"
     stop = threading.Event()

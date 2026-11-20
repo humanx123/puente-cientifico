@@ -93,6 +93,36 @@ def _torrc(puerto: int) -> Path:
     return ruta
 
 
+ERRORES_TOR = [
+    (r"\bclock\b|skew", "La hora de Windows no es correcta: Tor la necesita exacta. Sincroniza el reloj."),
+    (r"another tor process|is tor already running|\block\b", "Otra copia de Tor usaba la misma carpeta de datos (se cerró y se reintenta)."),
+    (r"could not bind|address already in use|10048", "El puerto del túnel estaba ocupado (se usará otro)."),
+    (r"no route|network is unreachable|connection refused|timed out", "La red no deja conectar con Tor. Prueba los puentes Snowflake."),
+]
+_huerfanos_cerrados = []
+
+
+def _cerrar_huerfanos() -> int:
+    """Cierra tor.exe de ESTA app que quedaron de una sesión anterior (nunca un Tor Browser del usuario)."""
+    base = carpeta_tor()
+    if not base or os.name != "nt":
+        return 0
+    exe = str(base / "tor" / "tor.exe")
+    # En PowerShell, una cadena entre comillas simples no interpreta barras invertidas: solo se escapan las comillas.
+    ruta_ps = exe.replace("'", "''")
+    cmd = f'$n=0; Get-CimInstance Win32_Process -Filter "Name=\'tor.exe\'" | Where-Object {{ $_.ExecutablePath -eq \'{ruta_ps}\' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }}; $n'
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=20,
+                           creationflags=0x08000000)
+        n = int((r.stdout or "0").strip().splitlines()[-1] or 0)
+    except (subprocess.SubprocessError, ValueError, IndexError, OSError):
+        n = 0
+    if n:
+        _huerfanos_cerrados.append(n)
+        time.sleep(1.5)
+    return n
+
+
 def _leer_salida(proc: subprocess.Popen) -> None:
     for linea in iter(proc.stdout.readline, ""):
         m = re.search(r"Bootstrapped (\d+)%[^:]*: (.*)", linea)
@@ -101,8 +131,12 @@ def _leer_salida(proc: subprocess.Popen) -> None:
             _estado["mensaje"] = m.group(2).strip()[:120]
             if _estado["progreso"] >= 100:
                 _estado["estado"] = "listo"
-        elif "[err]" in linea or "[warn]" in linea and "bridge" in linea.lower():
-            _estado["mensaje"] = linea.split("]", 1)[-1].strip()[:160]
+        elif "[err]" in linea or "[warn]" in linea:
+            texto = linea.split("]", 1)[-1].strip()
+            amable = next((msg for patron, msg in ERRORES_TOR if re.search(patron, texto, re.I)), None)
+            if "[err]" in linea or amable or "bridge" in linea.lower():
+                _estado["mensaje"] = amable or texto[:160]
+                _estado.setdefault("registro", []).append(texto[:200])
     if _estado["estado"] != "apagado":
         _estado["estado"] = "error"
         _estado["mensaje"] = _estado["mensaje"] or "Tor se detuvo."
@@ -116,6 +150,8 @@ def iniciar() -> dict:
         base = carpeta_tor()
         if not base:
             raise RuntimeError("Tor no está incluido en esta instalación.")
+        _cerrar_huerfanos()
+        _estado["registro"] = []
         puerto = int(load_settings()["literatura"].get("tor_puerto", 9077))
         while not _puerto_libre(puerto) and puerto < 9100:
             puerto += 1
@@ -148,7 +184,26 @@ atexit.register(detener)
 
 
 def estado() -> dict:
-    return dict(_estado, disponible=disponible(), modo=load_settings()["literatura"].get("tunel", "directo"))
+    vivo = _proc is not None and _proc.poll() is None
+    if _estado["estado"] in ("listo", "iniciando") and not vivo:
+        _estado.update(estado="error", mensaje=_estado.get("mensaje") or "El proceso de Tor terminó inesperadamente.")
+    s = load_settings()["literatura"]
+    return dict(_estado, disponible=disponible(), modo=s.get("tunel", "directo"), alcance=s.get("tunel_alcance", "bloqueados"),
+                proceso_vivo=vivo)
+
+
+def comprobar() -> dict:
+    """¿El tráfico sale realmente por Tor? (check.torproject.org)"""
+    import requests
+    if _estado["estado"] != "listo":
+        return {"ok": False, "detalle": f"Tor no está listo ({_estado['estado']} {_estado['progreso']}%)"}
+    url = f"socks5h://127.0.0.1:{_estado['puerto']}"
+    try:
+        r = requests.get("https://check.torproject.org/api/ip", proxies={"http": url, "https": url}, timeout=40)
+        d = r.json()
+        return {"ok": bool(d.get("IsTor")), "detalle": f"IP de salida {d.get('IP')}" + (" (Tor confirmado)" if d.get("IsTor") else "")}
+    except Exception as e:
+        return {"ok": False, "detalle": f"sin respuesta a través de Tor ({type(e).__name__})"}
 
 
 def esperar_listo(segundos: int = 90) -> None:

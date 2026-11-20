@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import concurrent.futures as cf
 import re
+import threading
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -34,6 +35,10 @@ class LibgenError(Exception):
     pass
 
 
+_FORZAR: dict = {"modo": None}  # None = según ajustes; "directo" | "tunel" para reintentar por la otra ruta
+_forzar_lock = threading.Lock()
+
+
 class _RequestsPorTunel:
     """libgen-api-enhanced llama a requests.get directamente; así pasa por el túnel y con tiempo límite."""
 
@@ -44,7 +49,7 @@ class _RequestsPorTunel:
     def get(self, url, **kw):
         from .literature import sesion
         kw.setdefault("timeout", 40)
-        return sesion().get(url, **kw)
+        return sesion("libgen", _FORZAR.get("modo")).get(url, **kw)
 
 
 class _ReSinBorrarAcentos:
@@ -140,7 +145,7 @@ def buscar(q: str, modo: str = "todo", temas: list[str] | None = None, pagina: i
             return s.search_default_filtered(q, filtros, exact_match=False, search_in=temas_ok, page=pagina)
         return s.search_default(q, search_in=temas_ok, page=pagina)
 
-    crudos = _con_limite(consulta, 45, "buscar")
+    crudos, ruta = _buscar_con_respaldo(consulta)
     libros, vistos = [], set()
     variantes = VARIANTES.get(idioma, (idioma.lower(),)) if idioma else ()
     for b in crudos:
@@ -150,7 +155,33 @@ def buscar(q: str, modo: str = "todo", temas: list[str] | None = None, pagina: i
         if l and l["md5"] not in vistos:
             vistos.add(l["md5"])
             libros.append(l)
-    return {"libros": libros, "pagina": pagina, "hay_mas": len(crudos) >= 25}
+    return {"libros": libros, "pagina": pagina, "hay_mas": len(crudos) >= 25, "ruta": ruta}
+
+
+def _rutas() -> list[str | None]:
+    """Ruta habitual y la alternativa: si el túnel está activo, también directo; y viceversa si hay túnel configurado."""
+    modo = load_settings()["literatura"].get("tunel", "directo")
+    return [None, "directo"] if modo != "directo" else [None]
+
+
+def _buscar_con_respaldo(consulta):
+    """LibGen a veces responde una página sin tabla (bloqueo de un nodo Tor, mantenimiento): el paquete
+    devuelve una lista vacía sin avisar. Se reintenta por la otra ruta antes de concluir «sin resultados»."""
+    ultimo_error = None
+    for ruta in _rutas():
+        with _forzar_lock:
+            _FORZAR["modo"] = ruta
+            try:
+                crudos = list(_con_limite(consulta, 45, "buscar"))
+            except LibgenError as e:
+                ultimo_error, crudos = e, []
+            finally:
+                _FORZAR["modo"] = None
+        if crudos:
+            return crudos, ("directa (el túnel no obtuvo resultados)" if ruta == "directo" else "habitual")
+    if ultimo_error:
+        raise ultimo_error
+    return [], "habitual"
 
 
 def resolver_enlace(libro: dict) -> str:
