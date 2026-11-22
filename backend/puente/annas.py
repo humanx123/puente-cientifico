@@ -124,8 +124,10 @@ def _get(ruta: str, params: dict | None = None, timeout: int = 30) -> tuple[requ
             if r.status_code == 200 and "forsale" not in texto and "domain is for sale" not in texto:
                 return r, base
             errores.append(f"{etiqueta}: {describir_respuesta(r)}")
-    # Retos anti-robots (DDoS-Guard / Cloudflare): un navegador real (WebView2) los supera
-    retados = [b for b in _dominios() if any(urllib.parse.urlsplit(b).hostname in e and ("DDoS-Guard" in e or "Cloudflare" in e)
+    # Retos anti-robots (DDoS-Guard / Cloudflare) o conexión cortada para Python: un navegador real
+    # (WebView2, con su propia pila de red y DNS seguro) suele superarlos
+    retados = [b for b in _dominios() if any(urllib.parse.urlsplit(b).hostname in e
+                                             and ("DDoS-Guard" in e or "Cloudflare" in e or "sin conexión" in e)
                                              for e in errores)]
     from . import navegador
     if retados and navegador.disponible():

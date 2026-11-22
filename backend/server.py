@@ -678,6 +678,18 @@ def annas_buscar(q: str, modo: str = "todo", tipos: str = "", extension: str = "
         raise HTTPException(400, str(e))
 
 
+@app.post("/api/libgen/buscar-ia")
+def libgen_buscar_ia(datos: dict = Body(...)):
+    from puente import busqueda_ia
+    return busqueda_ia.buscar_libros(datos.get("pregunta", ""), fuente="libgen")
+
+
+@app.post("/api/annas/buscar-ia")
+def annas_buscar_ia(datos: dict = Body(...)):
+    from puente import busqueda_ia
+    return busqueda_ia.buscar_libros(datos.get("pregunta", ""), fuente="annas")
+
+
 @app.get("/api/tunel")
 def tunel_estado():
     from puente import tunel

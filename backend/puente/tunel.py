@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import os
 import re
 import socket
@@ -29,6 +30,7 @@ TOR_DATA = DATA / "tor"
 _estado = {"estado": "apagado", "progreso": 0, "mensaje": "", "puerto": None, "inicio": None}
 _proc: subprocess.Popen | None = None
 _lock = threading.Lock()
+log = logging.getLogger("tor")
 
 
 def carpeta_tor() -> Path | None:
@@ -72,7 +74,7 @@ def _torrc(puerto: int) -> Path:
     TOR_DATA.mkdir(parents=True, exist_ok=True)
     lineas = [
         f"SocksPort 127.0.0.1:{puerto}",
-        f"DataDirectory {TOR_DATA / 'datos'}",
+        f"DataDirectory {_carpeta_datos_libre()}",
         f"GeoIPFile {base / 'data' / 'geoip'}",
         f"GeoIPv6File {base / 'data' / 'geoip6'}",
         "AvoidDiskWrites 1",
@@ -110,7 +112,13 @@ def _cerrar_huerfanos() -> int:
     exe = str(base / "tor" / "tor.exe")
     # En PowerShell, una cadena entre comillas simples no interpreta barras invertidas: solo se escapan las comillas.
     ruta_ps = exe.replace("'", "''")
-    cmd = f'$n=0; Get-CimInstance Win32_Process -Filter "Name=\'tor.exe\'" | Where-Object {{ $_.ExecutablePath -eq \'{ruta_ps}\' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $n++ }}; $n'
+    # También cualquier tor.exe que use NUESTRA carpeta de datos (p. ej. de otra instalación de la app en
+    # otra carpeta): con el mutex de instancia única, ese proceso es necesariamente un huérfano y bloquea
+    # el DataDirectory («Reading config failed»).
+    datos_ps = str(TOR_DATA).replace("'", "''")
+    cmd = (f'$n=0; Get-CimInstance Win32_Process -Filter "Name=\'tor.exe\'" | Where-Object {{ $_.ExecutablePath -eq \'{ruta_ps}\''
+           f' -or ($_.CommandLine -and $_.CommandLine.Contains(\'{datos_ps}\')) }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId'
+           f' -Force -ErrorAction SilentlyContinue; $n++ }}; $n')
     try:
         r = subprocess.run(["powershell", "-NoProfile", "-Command", cmd], capture_output=True, text=True, timeout=20,
                            creationflags=0x08000000)
@@ -120,7 +128,32 @@ def _cerrar_huerfanos() -> int:
     if n:
         _huerfanos_cerrados.append(n)
         time.sleep(1.5)
+    # Esperar a que se libere el bloqueo de la carpeta de datos.
+    cerrojo = TOR_DATA / "datos" / "lock"
+    for _ in range(20):
+        try:
+            if not cerrojo.exists():
+                break
+            cerrojo.unlink()
+            break
+        except OSError:
+            time.sleep(0.5)
     return n
+
+
+def _carpeta_datos_libre() -> Path:
+    """Carpeta de datos usable; si la principal sigue bloqueada por otro proceso, una alternativa."""
+    principal = TOR_DATA / "datos"
+    cerrojo = principal / "lock"
+    try:
+        if cerrojo.exists():
+            cerrojo.unlink()
+        return principal
+    except OSError:
+        alt = TOR_DATA / f"datos-{os.getpid()}"
+        alt.mkdir(parents=True, exist_ok=True)
+        log.warning("La carpeta de datos de Tor sigue bloqueada; se usa %s", alt)
+        return alt
 
 
 def _leer_salida(proc: subprocess.Popen) -> None:
@@ -133,10 +166,21 @@ def _leer_salida(proc: subprocess.Popen) -> None:
                 _estado["estado"] = "listo"
         elif "[err]" in linea or "[warn]" in linea:
             texto = linea.split("]", 1)[-1].strip()
+            log.warning("tor: %s", texto[:300])
+            _estado.setdefault("registro", []).append(texto[:200])
             amable = next((msg for patron, msg in ERRORES_TOR if re.search(patron, texto, re.I)), None)
-            if "[err]" in linea or amable or "bridge" in linea.lower():
-                _estado["mensaje"] = amable or texto[:160]
-                _estado.setdefault("registro", []).append(texto[:200])
+            if amable:
+                _estado["mensaje"] = amable
+                _estado["amable"] = True
+            elif "[err]" in linea or "bridge" in linea.lower():
+                generico = re.search(r"reading config failed|see warnings above", texto, re.I)
+                if generico and _estado.get("amable"):
+                    continue  # no tapar la causa real ya explicada
+                if generico:
+                    previos = [r for r in _estado["registro"][:-1] if not re.search(r"see warnings above", r, re.I)]
+                    _estado["mensaje"] = (previos[-1] if previos else texto)[:160]
+                else:
+                    _estado["mensaje"] = texto[:160]
     if _estado["estado"] != "apagado":
         _estado["estado"] = "error"
         _estado["mensaje"] = _estado["mensaje"] or "Tor se detuvo."
@@ -152,6 +196,7 @@ def iniciar() -> dict:
             raise RuntimeError("Tor no está incluido en esta instalación.")
         _cerrar_huerfanos()
         _estado["registro"] = []
+        _estado["amable"] = False
         puerto = int(load_settings()["literatura"].get("tor_puerto", 9077))
         while not _puerto_libre(puerto) and puerto < 9100:
             puerto += 1

@@ -371,19 +371,33 @@ function Libros({ fuente, descargarLibro }) {
       setUltima({ texto, m })
     } catch (e) { avisar(e.message, 'error', 9000) } finally { setCargando(false) }
   }
-  const buscar = (e) => { e?.preventDefault(); consultar(q, modo === 'titulo_autor' ? 'todo' : modo) }
+  const buscarIA = async () => {
+    setCargando(true)
+    try {
+      const endpoint = esAA ? '/api/annas/buscar-ia' : '/api/libgen/buscar-ia'
+      const r = await api.post(endpoint, { pregunta: q })
+      seleccion.limpiar(); setRes(r); setUltima(null)
+      if (r.aviso) avisar(r.aviso, 'info', 9000)
+    } catch (err) { avisar(err.message, 'error', 9000) } finally { setCargando(false) }
+  }
+  const buscar = (e) => {
+    e?.preventDefault()
+    if (modo === 'ia') buscarIA()
+    else consultar(q, modo === 'titulo_autor' ? 'todo' : modo)
+  }
   const porAutor = (a) => { const n = a.nombre || a; setModo('autor'); setQ(n); consultar(n, 'autor') }
   const alternar = (k) => setTemas((t) => t.includes(k) ? t.filter((x) => x !== k) : [...t, k])
 
   return (
     <>
       <form onSubmit={buscar} className="col" style={{ marginBottom: 20 }}>
-        <BarraModo modo={modo === 'titulo_autor' ? 'todo' : modo} setModo={setModo} />
+        <BarraModo modo={modo === 'titulo_autor' ? 'todo' : modo} setModo={setModo} extra={[['ia', '✦ Con IA']]} />
         <div className="fila">
           <div className="busqueda" style={{ flex: 1 }}>
-            {modo === 'autor' ? <User size={17} /> : <Search size={17} />}
+            {modo === 'autor' ? <User size={17} /> : modo === 'ia' ? <Sparkles size={17} /> : <Search size={17} />}
             <input autoFocus className="entrada" style={{ fontSize: 16, padding: '12px 12px 12px 36px' }}
-              placeholder={modo === 'autor' ? 'Autor (ej. Bruce Alberts)' : modo === 'titulo' ? 'Título del libro' : 'Título, autor, ISBN o editorial'}
+              placeholder={modo === 'autor' ? 'Autor (ej. Bruce Alberts)' : modo === 'titulo' ? 'Título del libro'
+                : modo === 'ia' ? 'Describe lo que buscas, p. ej.: libros de virología molecular en español, últimas ediciones' : 'Título, autor, ISBN o editorial'}
               value={q} onChange={(e) => setQ(e.target.value)} />
           </div>
           <button className="btn primario" style={{ padding: '13px 20px' }} disabled={cargando}>{cargando ? <Loader2 size={16} className="girar" /> : <Search size={16} />}Buscar</button>
@@ -405,6 +419,16 @@ function Libros({ fuente, descargarLibro }) {
         </div>
       </form>
 
+      {res?.plan && (
+        <div className="banda-autor">
+          <div className="fila"><Sparkles size={16} /><b>Búsqueda con IA</b><span className="mono" style={{ fontSize: 11 }}>{res.modelo}</span></div>
+          {res.plan.explicacion && <div style={{ fontSize: 12.5 }}>{res.plan.explicacion}</div>}
+          <div className="chips">{res.plan.consultas?.map((c) => <span key={c} className="chip">{c}</span>)}
+            {res.plan.autor && <span className="chip">autor: {res.plan.autor}</span>}
+            {res.plan.idioma && <span className="chip">idioma: {res.plan.idioma}</span>}
+            {res.plan.tipos?.length > 0 && <span className="chip">tipos: {res.plan.tipos.join(', ')}</span>}</div>
+        </div>
+      )}
       {!res && <Vacio titulo={esAA ? "Anna's Archive" : 'Library Genesis'}>
         <p style={{ margin: 0, maxWidth: 600 }}>{esAA
           ? "Catálogo unificado de LibGen, Z-Library, Sci-Hub e Internet Archive. Las descargas usan tu clave de miembro si la configuras; si no, se obtienen por md5 desde LibGen. Si tu red bloquea el sitio, activa el túnel Tor."
@@ -424,6 +448,8 @@ function Libros({ fuente, descargarLibro }) {
             <h3>{l.titulo}</h3>
             <div className="autores"><Autores lista={l.autores?.length ? l.autores : (l.autor ? [l.autor] : [])} onAutor={porAutor} /></div>
             <div className="meta">{[l.editorial, l.anio, l.idioma, l.paginas && `${l.paginas} págs.`].filter(Boolean).join(' · ')}</div>
+            {l.motivo_ia && <div style={{ fontSize: 12.5, display: 'flex', gap: 8, alignItems: 'baseline' }}>
+              <span className={`chip ${l.relevancia >= 7 ? 'verde' : l.relevancia >= 4 ? 'acido' : ''}`}>IA {l.relevancia}/10</span><span className="tenue">{l.motivo_ia}</span></div>}
             <div className="chips">
               {l.extension && <span className={`chip ${['pdf', 'epub', 'mobi', 'fb2', 'cbz'].includes(l.extension) ? 'verde' : ''}`}>{l.extension.toUpperCase()}</span>}
               {l.tamano && <span className="chip">{l.tamano}</span>}

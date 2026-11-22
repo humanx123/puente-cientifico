@@ -17,7 +17,7 @@ import requests
 from . import freellmapi, llm, resolver, tunel
 from .config import load_settings, save_settings
 
-ESPEJOS_LIBGEN = ["li", "bz", "la", "vg", "gl"]
+ESPEJOS_LIBGEN = ["rs", "is", "li", "gs", "st"]
 _ultimo: dict = {}
 
 
@@ -63,6 +63,28 @@ def _probar_annas(base, ruta):
             return True, f"{n} resultados de prueba", base
         return False, describir_respuesta(r), base
     return f
+
+
+def _annas_por_navegador(dominios) -> list[dict]:
+    from . import navegador
+    if not dominios or not navegador.disponible():
+        return []
+    out = []
+    for d in dominios:
+        base = d if d.startswith("http") else "https://" + d
+        def f(base=base):
+            r = navegador.obtener_texto(base, base + "/search?q=biology&display=table")
+            if not r:
+                return False, "el navegador integrado no superó la verificación", base
+            n = len(set(re.findall(r"/md5/([0-9a-f]{32})", r[1] or "")))
+            if r[0] == 200 and n:
+                return True, f"{n} resultados de prueba (navegador integrado)", base
+            return False, f"navegador integrado: HTTP {r[0]}, sin resultados", base
+        ok, det, ms, dato = _medir(f)
+        out.append(_r("Anna's Archive", urllib.parse.urlsplit(base).hostname, "navegador", ok, det, ms, dato))
+        if ok:
+            break  # basta uno: cada prueba abre una sesión en la ventana y tarda
+    return out
 
 
 def _probar_scihub(base, ruta):
@@ -147,7 +169,10 @@ def ejecutar() -> dict:
             g, n, r = futuros[fut]
             ok, det, ms, dato = fut.result()
             res.append(_r(g, n, r, ok, det, ms, dato))
-    orden = {"Conexión": 0, "App": 1, "Túnel": 2, "LibGen": 3, "Anna's Archive": 4, "Sci-Hub": 5}
+    # Anna's Archive sin respuesta para Python: probar como lo hace la búsqueda real, con el navegador integrado
+    if not _que_funciona(res, "Anna's Archive"):
+        res.extend(_annas_por_navegador(s.get("annas_dominios") or []))
+    orden ={"Conexión": 0, "App": 1, "Túnel": 2, "LibGen": 3, "Anna's Archive": 4, "Sci-Hub": 5}
     res.sort(key=lambda x: (orden.get(x["grupo"], 9), x["nombre"], x["ruta"]))
     _ultimo.clear()
     _ultimo.update(resultados=res, cuando=time.time())
@@ -169,7 +194,7 @@ def sugerencias(res) -> list[str]:
         if not bien:
             out.append(f"{g}: no responde por ninguna ruta" + (" (prueba activar el túnel Tor)" if s.get("tunel", "directo") == "directo" else ""))
         else:
-            out.append(f"{g}: usar primero {bien[0]['nombre']} ({'túnel' if bien[0]['ruta'] == 'tunel' else 'directo'})")
+            out.append(f"{g}: usar primero {bien[0]['nombre']} ({ {'tunel': 'túnel', 'navegador': 'navegador integrado'}.get(bien[0]['ruta'], 'directo') })")
     if s.get("tunel_alcance") == "todo":
         out.append("Limitar el túnel a los sitios bloqueados (OpenAlex por Tor siempre responde 429)")
     if not any(x["nombre"].startswith("Ventana nativa") and x["ok"] for x in res):

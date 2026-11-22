@@ -90,8 +90,8 @@ DEFAULT_SETTINGS = {
         "openalex_correo": "",
         "openalex_clave": "",
         "guardar_copia_en": "",  # carpeta extra donde dejar el PDF además de la biblioteca
-        "libgen_espejo": "li",  # dominio de LibGen: li, bz, gs, la, vg…
-        "annas_dominios": ["annas-archive.gl", "annas-archive.pk", "annas-archive.gd", "annas-archive.se", "annas-archive.org"],
+        "libgen_espejo": "rs",  # dominio de LibGen: rs, is, li, gs, st…
+        "annas_dominios": ["annas-archive.gs", "annas-archive.gl", "annas-archive.pk", "annas-archive.gd"],
         "annas_clave": "",  # clave de miembro (descarga rápida); opcional
         "annas_doh": True,  # resolver con DNS sobre HTTPS si el DNS del sistema no resuelve
         "tunel": "directo",  # directo | tor | proxy
