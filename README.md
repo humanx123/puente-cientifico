@@ -4,7 +4,9 @@ App de escritorio para Windows, en español, que reúne varios proyectos de cód
 
 ## Capturas de pantalla
 
-<!-- TODO: Agregar capturas cuando Chrome esté disponible -->
+![Lector con traducción y exportación](docs/screenshots/puente_cientifico.png)
+
+*Lector de PDF con vista comparar (original/traducción), panel de miniaturas y opciones de exportación.*
 
 ## Proyectos integrados
 
