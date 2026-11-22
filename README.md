@@ -74,3 +74,9 @@ build/              Python embebido, instalador Inno Setup, icono
 ## Aviso
 
 Usa Sci-Hub conforme a la legislación de derechos de autor de tu país. La app prioriza las copias de acceso abierto cuando existen.
+
+## Donar
+
+Si esta app te ayuda en tu investigación, considera apoyar su desarrollo:
+
+**Bitcoin:** `bc1qd9j45f4t0jwyhjhqh2kvz2cr7k8xye460rr2y7`
